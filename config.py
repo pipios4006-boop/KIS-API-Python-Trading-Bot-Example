@@ -98,14 +98,23 @@ class ConfigManager:
                 total += float(amount)
         return total
 
-    # 🚀 [V15.1] T값 산출 절대 공식: (총 매수액 / 1회분)
-    def calculate_v15_t_val(self, ticker):
-        recs = [r for r in self.get_ledger() if r['ticker'] == ticker]
-        total_buy_amt = sum(r['price'] * r['qty'] for r in recs if r['side'] == 'BUY')
-        
+    # 1회 매수분(one_portion) 산출 및 유효성 검사
+    def get_one_portion(self, ticker):
         seed = self.get_seed(ticker)
         split = self.get_split_count(ticker)
-        one_portion = seed / split if split > 0 else 1
+        
+        if seed <= 0 or split <= 0:
+            raise ValueError(f"⚠️ [{ticker}] 설정 오류: 시드({seed}) 또는 분할수({split})가 0입니다. /seed 또는 /ticker 명령어로 설정을 확인해주세요.")
+            
+        return seed / split
+
+    # T값 산출 절대 공식: (총 매수액 / 1회분)
+    def calculate_t_val(self, ticker, qty, avg_price):
+        # 🔥 실제 잔고(KIS 팩트)를 기반으로 총 매수액 산출
+        total_buy_amt = qty * avg_price
+        
+        # 유효성 검사가 포함된 one_portion 호출
+        one_portion = self.get_one_portion(ticker)
         
         t_val = total_buy_amt / one_portion
         return round(t_val, 4)

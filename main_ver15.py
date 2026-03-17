@@ -60,16 +60,19 @@ def is_market_open():
 def get_budget_allocation(cash, tickers, cfg):
     sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
     total_req, portions = 0, {}
-    
+
     for tx in sorted_tickers:
-        split = cfg.get_split_count(tx)
-        portion = cfg.get_seed(tx) / split if split > 0 else 0
-        portions[tx] = portion
-        total_req += portion
-        
+        try:
+            portion = cfg.get_one_portion(tx)
+            portions[tx] = portion
+            total_req += portion
+        except ValueError:
+            portions[tx] = 0
+            # 여기서 에러를 직접 던지지 않고 0으로 처리하여 루프를 돌게 하되, 
+            # 실제 주문 로직(scheduled_regular_trade)에서 다시 에러를 잡아 알림을 보냅니다.
+
     force_turbo_off = cash < total_req
     rem_cash, allocated = cash, {}
-    
     for tx in sorted_tickers:
         if rem_cash >= portions[tx]:
             allocated[tx] = rem_cash 
@@ -106,20 +109,24 @@ async def scheduled_premarket_monitor(context):
     if holdings is None: return 
 
     for t in cfg.get_active_tickers():
-        h = holdings.get(t, {'qty': 0, 'avg': 0})
-        if int(h['qty']) == 0: continue 
+        try:
+            h = holdings.get(t, {'qty': 0, 'avg': 0})
+            if int(h['qty']) == 0: continue 
 
-        curr_p = broker.get_current_price(t)
-        plan = strategy.get_plan(t, curr_p, float(h['avg']), int(h['qty']), broker.get_previous_close(t), market_type="PRE_CHECK")
-        
-        if plan['orders']:
-            msg = f"🌅 <b>[{t}] 대박! 프리마켓 목표 달성 🎉</b>\n⚡ 전량 익절 주문을 실행합니다!"
-            broker.cancel_all_orders_safe(t)
-            for o in plan['orders']:
-                res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
-                status_icon = "✅" if res.get('rt_cd') == "0" else f"❌({res.get('msg1')})"
-                msg += f"\n└ {o['desc']}: {status_icon}"
-            await context.bot.send_message(chat_id=context.job.chat_id, text=msg, parse_mode='HTML')
+            curr_p = broker.get_current_price(t)
+            plan = strategy.get_plan(t, curr_p, float(h['avg']), int(h['qty']), broker.get_previous_close(t), market_type="PRE_CHECK")
+            
+            if plan['orders']:
+                msg = f"🌅 <b>[{t}] 대박! 프리마켓 목표 달성 🎉</b>\n⚡ 전량 익절 주문을 실행합니다!"
+                broker.cancel_all_orders_safe(t)
+                for o in plan['orders']:
+                    res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
+                    status_icon = "✅" if res.get('rt_cd') == "0" else f"❌({res.get('msg1')})"
+                    msg += f"\n└ {o['desc']}: {status_icon}"
+                await context.bot.send_message(chat_id=context.job.chat_id, text=msg, parse_mode='HTML')
+        except ValueError as e:
+            await context.bot.send_message(chat_id=context.job.chat_id, text=str(e), parse_mode='HTML')
+            continue
 
 async def scheduled_regular_trade(context):
     if not is_market_open(): return
@@ -141,30 +148,34 @@ async def scheduled_regular_trade(context):
         if cfg.check_lock(t, "REG"): continue
         h = holdings.get(t, {'qty': 0, 'avg': 0})
         
-        ma_5day = broker.get_5day_ma(t)
-        plan = strategy.get_plan(t, broker.get_current_price(t), float(h['avg']), int(h['qty']), broker.get_previous_close(t), ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t], force_turbo_off=force_turbo_off)
-        
-        if plan['orders']:
-            is_rev = plan.get('is_reverse', False)
-            title = f"🔄 <b>[{t}] V14 리버스 주문 실행</b>\n" if is_rev else f"💎 <b>[{t}] 주문 실행</b>\n"
-            msg, success_count = title, 0
+        try:
+            ma_5day = broker.get_5day_ma(t)
+            plan = strategy.get_plan(t, broker.get_current_price(t), float(h['avg']), int(h['qty']), broker.get_previous_close(t), ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t], force_turbo_off=force_turbo_off)
             
-            for o in plan['orders']:
-                res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
-                is_success = res.get('rt_cd') == '0'
-                if is_success: success_count += 1
-                status_icon = "✅" if is_success else f"❌({res.get('msg1')})"
-                msg += f"└ {o['desc']} {o['qty']}주: {status_icon}\n"
-            
-            if success_count > 0:
-                cfg.set_lock(t, "REG")
-                msg += "\n🔒 <b>주문 전송 완료 (매매 잠금 설정됨)</b>"
+            if plan['orders']:
+                is_rev = plan.get('is_reverse', False)
+                title = f"🔄 <b>[{t}] V14 리버스 주문 실행</b>\n" if is_rev else f"💎 <b>[{t}] 주문 실행</b>\n"
+                msg, success_count = title, 0
                 
-                rev_state = cfg.get_reverse_state(t)
-                if rev_state["is_active"]:
-                    cfg.set_reverse_state(t, True, rev_state["day_count"] + 1)
+                for o in plan['orders']:
+                    res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
+                    is_success = res.get('rt_cd') == '0'
+                    if is_success: success_count += 1
+                    status_icon = "✅" if is_success else f"❌({res.get('msg1')})"
+                    msg += f"└ {o['desc']} {o['qty']}주: {status_icon}\n"
+                
+                if success_count > 0:
+                    cfg.set_lock(t, "REG")
+                    msg += "\n🔒 <b>주문 전송 완료 (매매 잠금 설정됨)</b>"
                     
-            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
+                    rev_state = cfg.get_reverse_state(t)
+                    if rev_state["is_active"]:
+                        cfg.set_reverse_state(t, True, rev_state["day_count"] + 1)
+                        
+                await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
+        except ValueError as e:
+            await context.bot.send_message(chat_id=chat_id, text=str(e), parse_mode='HTML')
+            continue
 
 async def scheduled_auto_sync_summer(context):
     if not is_dst_active(): return 

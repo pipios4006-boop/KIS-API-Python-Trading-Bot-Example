@@ -80,10 +80,11 @@ class InfiniteStrategy:
                         # 🚀 [V16.8 추가] 탈출 시 휘발성 에스크로 금고 완벽 소각
                         self.cfg.clear_escrow_cash(ticker)
         else:
-            one_portion_amt = seed / split if split > 0 else 0
-            # 🔥 [V15.7] V13(무매3)에서도 T값 산출을 KIS 절대 공식으로 오버라이드
-            t_val = round((qty * avg_price) / one_portion_amt, 4) if one_portion_amt > 0 else 0.0
+            # ConfigManager의 검증된 로직으로 단일화 (ValueError 발생 시 상위에서 처리)
+            one_portion_amt = self.cfg.get_one_portion(ticker)
+            t_val = self.cfg.calculate_t_val(ticker, qty, avg_price)
 
+        # split이 0인 경우에 대한 최종 방어
         depreciation_factor = 2.0 / split if split > 0 else 0.1
         star_ratio = target_ratio - (target_ratio * depreciation_factor * t_val)
         
