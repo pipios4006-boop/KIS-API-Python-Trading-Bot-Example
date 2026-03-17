@@ -1,0 +1,7 @@
+Pillow
+python-dotenv
+requests
+yfinance
+pytz
+pandas-market-calendars
+python-telegram-bot[job-queue]
