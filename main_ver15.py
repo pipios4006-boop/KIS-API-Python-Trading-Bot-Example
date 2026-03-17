@@ -51,11 +51,14 @@ def is_dst_active():
 def get_target_hour():
     return (17, "🌞 서머타임 적용(여름)") if is_dst_active() else (18, "❄️ 서머타임 해제(겨울)")
 
+# 전역 변수로 NYSE 캘린더 객체를 한 번만 생성하여 재사용합니다. (리소스 최적화)
+NYSE_CALENDAR = mcal.get_calendar('NYSE')
+
 def is_market_open():
     est = pytz.timezone('US/Eastern')
     today = datetime.datetime.now(est).date()
-    nyse = mcal.get_calendar('NYSE')
-    return not nyse.schedule(start_date=today, end_date=today).empty
+    # 전역 캘린더 객체 사용 및 스케줄 조회 최적화
+    return not NYSE_CALENDAR.schedule(start_date=today, end_date=today).empty
 
 def get_budget_allocation(cash, tickers, cfg):
     sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
