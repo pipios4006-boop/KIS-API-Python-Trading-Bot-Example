@@ -84,7 +84,6 @@ class InfiniteStrategy:
             one_portion_amt = self.cfg.get_one_portion(ticker)
             t_val = self.cfg.calculate_t_val(ticker, qty, avg_price)
 
-        # split이 0인 경우에 대한 최종 방어
         depreciation_factor = 2.0 / split if split > 0 else 0.1
         star_ratio = target_ratio - (target_ratio * depreciation_factor * t_val)
         
