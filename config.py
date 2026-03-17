@@ -28,6 +28,7 @@ class ConfigManager:
             "TURBO": "data/turbo_mode.dat",
             "PROFIT_CFG": "data/profit_config.json",
             "LOCKS": "data/trade_locks.json",
+            "ESCROW": "data/escrow.json",
             "SEED_CFG": "data/seed_config.json",         
             "COMPOUND_CFG": "data/compound_config.json",
             "VERSION_CFG": "data/version_config.json",
@@ -71,32 +72,30 @@ class ConfigManager:
 
     # 🚀 [V16.8] 휘발성 가상 장부(Escrow) 로직 - 타 종목 예산 탈취 원천 차단
     def get_escrow_cash(self, ticker):
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        return float(locks.get(f"ESCROW_{ticker}", 0.0))
+        escrow = self._load_json(self.FILES["ESCROW"], {})
+        return float(escrow.get(ticker, 0.0))
 
     def set_escrow_cash(self, ticker, amount):
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        locks[f"ESCROW_{ticker}"] = float(amount)
-        self._save_json(self.FILES["LOCKS"], locks)
+        escrow = self._load_json(self.FILES["ESCROW"], {})
+        escrow[ticker] = float(amount)
+        self._save_json(self.FILES["ESCROW"], escrow)
 
     def add_escrow_cash(self, ticker, amount):
         current = self.get_escrow_cash(ticker)
         self.set_escrow_cash(ticker, current + float(amount))
 
     def clear_escrow_cash(self, ticker):
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        if f"ESCROW_{ticker}" in locks:
-            del locks[f"ESCROW_{ticker}"]
-            self._save_json(self.FILES["LOCKS"], locks)
+        escrow = self._load_json(self.FILES["ESCROW"], {})
+        if ticker in escrow:
+            del escrow[ticker]
+            self._save_json(self.FILES["ESCROW"], escrow)
 
     def get_total_locked_cash(self, exclude_ticker=None):
-        locks = self._load_json(self.FILES["LOCKS"], {})
+        escrow = self._load_json(self.FILES["ESCROW"], {})
         total = 0.0
-        for k, v in locks.items():
-            if k.startswith("ESCROW_"):
-                ticker_in_lock = k.replace("ESCROW_", "")
-                if ticker_in_lock != exclude_ticker:
-                    total += float(v)
+        for ticker, amount in escrow.items():
+            if ticker != exclude_ticker:
+                total += float(amount)
         return total
 
     # 1회 매수분(one_portion) 산출 및 유효성 검사
