@@ -574,12 +574,12 @@ class TelegramController:
                 ticker = parts[2]
                 d = self.cfg._load_json(self.cfg.FILES["PROFIT_CFG"], self.cfg.DEFAULT_TARGET)
                 d[ticker] = val; self.cfg._save_json(self.cfg.FILES["PROFIT_CFG"], d)
-                update.message.reply_text(f"✅ [{ticker}] 목표: {val}%")
+                await update.message.reply_text(f"✅ [{ticker}] 목표: {val}%")
                 
             elif state.startswith("CONF_COMPOUND"):
                 ticker = parts[2]
                 self.cfg.set_compound_rate(ticker, val)
-                update.message.reply_text(f"✅ [{ticker}] 졸업 시 자동 복리율: {val}%")
+                await update.message.reply_text(f"✅ [{ticker}] 졸업 시 자동 복리율: {val}%")
                 
             del self.user_states[chat_id]
         except: await update.message.reply_text("❌ 오류: 숫자를 입력하세요.")
