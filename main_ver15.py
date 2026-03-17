@@ -53,12 +53,17 @@ def get_target_hour():
 
 # 전역 변수로 NYSE 캘린더 객체를 한 번만 생성하여 재사용합니다. (리소스 최적화)
 NYSE_CALENDAR = mcal.get_calendar('NYSE')
+# 날짜 단위 캐시: 하루에 schedule() 를 1회만 실행하기 위한 저장소
+_market_open_cache = {"date": None, "result": None}
 
 def is_market_open():
     est = pytz.timezone('US/Eastern')
     today = datetime.datetime.now(est).date()
-    # 전역 캘린더 객체 사용 및 스케줄 조회 최적화
-    return not NYSE_CALENDAR.schedule(start_date=today, end_date=today).empty
+    # 오늘 날짜로 아직 조회한 적 없을 때만 schedule() 실행, 이후 호출은 캐시 반환
+    if _market_open_cache["date"] != today:
+        _market_open_cache["date"] = today
+        _market_open_cache["result"] = not NYSE_CALENDAR.schedule(start_date=today, end_date=today).empty
+    return _market_open_cache["result"]
 
 def get_budget_allocation(cash, tickers, cfg):
     sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
