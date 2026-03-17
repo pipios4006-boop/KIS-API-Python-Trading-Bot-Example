@@ -24,9 +24,9 @@ class TelegramController:
     # 허가된 관리자 계정인지 확인합니다.
     def _is_admin(self, update: Update):
         if self.admin_id is None:
-            self.admin_id = update.effective_chat.id
-            self.cfg.set_chat_id(self.admin_id)
-            return True
+            # 보안 강화: 첫 접속자 자동 등록 로직 제거 (명시적 ADMIN_CHAT_ID 설정 필요)
+            logging.error("⛔ [보안경고] 관리자 ID(ADMIN_CHAT_ID)가 설정되지 않았습니다. .env 파일을 확인해주세요.")
+            return False
         return update.effective_chat.id == self.admin_id
 
     # 현재 서머타임 적용 여부를 확인합니다.
