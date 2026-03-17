@@ -133,12 +133,16 @@ class InfiniteStrategy:
                 sell_divisor = 10 if split <= 20 else 20
                 sell_qty = math.floor(qty / sell_divisor) 
 
-                if rev_day == 1:
-                    process_status = "🚨리버스(1일차)"
-                    # 첫날은 매수 없이 무조건 MOC 매도만
+                # 🔥 [V16.7 추가] 긴급 자금 수혈 로직: 에스크로 잔금이 1주 살 돈보다 적다면 MOC 강제 매도
+                is_emergency_cash_needed = (real_available_cash < base_price) and (rev_day > 1)
+
+                if rev_day == 1 or is_emergency_cash_needed:
+                    process_status = "🩸리버스(긴급수혈)" if is_emergency_cash_needed else "🚨리버스(1일차)"
+                    # 첫날이거나 자금이 고갈된 경우, 매수 없이 무조건 MOC 매도만 진행하여 자금 확보
                     if sell_qty > 0:
-                        # [V14.6] 주문명 간소화 (리버스MOC매도 -> 의무매도)
-                        orders.append({"side": "SELL", "price": 0, "qty": sell_qty, "type": "MOC", "desc": "🛡️의무매도"})
+                        # [V14.6] 주문명 간소화 (리버스MOC매도 -> 의무매도) + 수혈매도 추가
+                        desc_str = "🩸수혈매도(MOC)" if is_emergency_cash_needed else "🛡️의무매도"
+                        orders.append({"side": "SELL", "price": 0, "qty": sell_qty, "type": "MOC", "desc": desc_str})
                 else:
                     process_status = f"🔄리버스({rev_day}일차)"
                     buy_qty = 0

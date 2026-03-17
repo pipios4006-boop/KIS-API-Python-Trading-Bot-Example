@@ -7,17 +7,19 @@ class TelegramView:
     def __init__(self):
         pass
 
-    # [V14.5] latest_version 매개변수를 추가하여 최신 버전명을 동적으로 전달받습니다.
     def get_start_message(self, target_hour, season_icon, latest_version):
         init_time = f"{target_hour}:00"
         order_time = f"{target_hour}:30"
         season_short = "🌞서머타임 ON" if "Summer" in season_icon else "❄️서머타임 OFF"
         sync_time = "08:30" if target_hour == 17 else "09:30"
 
-        # 🚀 [V16.1] /record 명령어 다시 부활!
+        # 🚀 [V16.8] 에스크로 락다운 및 긴급수혈 엔진 설명 추가 (방금 누락되었던 부분 복구!)
         return (
             f"🌌 <b>[ 다이내믹 스노우볼 TrueSync {latest_version} ]</b>\n" 
             f"⚡ <b>API 팩트 기반 무결성 동기화 엔진 가동</b> \n\n"
+            f"🛡️ <b>[ V16.x 주요 방어 시스템 ]</b>\n"
+            f"🔒 <b>에스크로 락다운</b>: 리버스 진입 종목의 확보 자금을 가상 금고에 격리하여 타 종목의 예산 탈취를 원천 차단합니다.\n"
+            f"🩸 <b>긴급 수혈 엔진</b>: 에스크로 자금 고갈 시 봇이 스스로 MOC 의무매도를 단행하여 4일 치 생명수(현금)를 자동 창출합니다.\n\n"
             f"🕒 <b>[ 운영 스케줄 ({season_short}) ]</b>\n"
             f"🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
             f"🔹 {sync_time} : 📝 잔고 동기화 & 자동 복리\n"
@@ -36,7 +38,6 @@ class TelegramView:
             "⚠️ <b>/reset</b> : 🔓 비상 해제 메뉴 (락/리버스)" 
         )
 
-    # [V14.7] 안전 통제실 메인 메뉴 UI 생성
     def get_reset_menu(self):
         msg = (
             "🛠️ <b>[ 시스템 안전 통제실 ]</b>\n"
@@ -50,7 +51,6 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # [V14.7] 리버스 모드 해제 시 2중 안전장치(확인) UI 생성
     def get_reset_confirm_menu(self, ticker):
         msg = (
             f"⚠️ <b>[ 경고: {ticker} 리버스 모드 해제 ]</b>\n\n"
@@ -63,12 +63,10 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚀 [V15.5] 1줄 압축된 버전 히스토리를 텔레그램 메시지로 예쁘게 포맷팅
     def get_version_message(self, history_data):
         msg = "🛠️ <b>[ 버전 및 업데이트 내역 ]</b>\n\n"
         for h in history_data:
             if isinstance(h, str):
-                # "V15.5 [2026.03.17] 내용" 형식 파싱
                 parts = h.split(' ', 2)
                 if len(parts) >= 3:
                     ver = parts[0]
@@ -78,17 +76,14 @@ class TelegramView:
                 else:
                     msg += f"📌 {h}\n\n"
             elif isinstance(h, dict): 
-                # 과거 호환성 (V14.5 이전)
                 msg += f"📌 <b>{h.get('version', '')}</b> ({h.get('date', '')})\n▫️ {h.get('summary', '')}\n\n"
         return msg.strip()
 
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active):
-        # 🚀 [V16.8] 타 종목들이 잠가둔 전체 격리금 총액 계산
         total_locked = sum(t_info.get('escrow', 0.0) for t_info in ticker_data)
         
         header_msg = f"📜 <b>[ 통합 지시서 ({status_text}) ]</b>\n📅 <b>{dst_text}</b>\n"
         
-        # 🚀 [V16.8] 에스크로 유무에 따른 상단 잔고 UI 동적 출력
         if total_locked > 0:
             real_cash = max(0, cash - total_locked)
             header_msg += f"💵 한투 전체 잔고: ${cash:,.2f}\n"
@@ -108,21 +103,28 @@ class TelegramView:
             v_mode = t_info['version']
             v_mode_display = "무매4" if v_mode == "V14" else "무매3"
             is_rev = t_info.get('is_reverse', False)
+            proc_status = t_info['plan'].get('process_status', '')
             
-            # [V14.1 리버스모드] UI 수정안 A 반영
+            # 🔥 [V16.7 엠뷸런스 UI] 긴급 수혈 시 시각적 알림 추가 (방금 누락되었던 부분 복구!)
+            if proc_status == "🩸리버스(긴급수혈)":
+                body_msg += f"⚠️ <b>[🚨 비상 상황: {t} 긴급 수혈 중]</b>\n"
+                body_msg += f"❗ <i>에스크로 금고가 바닥나 강제 매도를 통해 현금을 생성합니다.</i>\n\n"
+            
             if is_rev:
                 bdg_txt = f"리버스 잔금쿼터 ${t_info['one_portion']:,.0f}"
-                body_msg += f"🔄 <b>[{t}] {v_mode_display} 리버스 ({t_info['t_val']}T / {int(t_info['split'])}분)</b>\n"
+                icon = "🩸" if proc_status == "🩸리버스(긴급수혈)" else "🔄"
+                body_msg += f"{icon} <b>[{t}] {v_mode_display} 리버스 ({t_info['t_val']}T / {int(t_info['split'])}분)</b>\n"
             else:
                 bdg_txt = f"오늘 예산 ${t_info['one_portion']:,.0f}" if v_mode == "V14" else f"1회 ${t_info['one_portion']:,.0f}"
                 body_msg += f"💎 <b>[{t}] ({v_mode_display} / {t_info['t_val']}T / {int(t_info['split'])}분할)</b>\n"
             
             body_msg += f"💵 총 시드: ${t_info['seed']:,.0f} ({bdg_txt})\n"
             
-            # 🚀 [V16.8] 해당 종목의 에스크로 가상 장부 금액 표시
             escrow = t_info.get('escrow', 0.0)
             if escrow > 0:
                 body_msg += f"🔐 <b>내 금고 보호액: ${escrow:,.2f}</b>\n"
+            elif is_rev and proc_status == "🩸리버스(긴급수혈)":
+                body_msg += f"🔐 <b>내 금고 보호액: $0.00 (Empty 🚨)</b>\n"
                 
             body_msg += f"💰 현재 ${t_info['curr']:,.2f} / 평단 ${t_info['avg']:,.2f} <b>({t_info['qty']}주)</b>\n"
             
@@ -130,13 +132,11 @@ class TelegramView:
             icon = "🔺" if t_info['profit_amt'] >= 0 else "🔻"
             body_msg += f"{icon} <b>수익: {sign}{abs(t_info['profit_pct']):.2f}% ({sign}${abs(t_info['profit_amt']):,.2f})</b>\n"
             
-            # [V14.1 리버스모드] 별지점 표시
             if is_rev:
                 body_msg += f"⚙️ 🌟 <b>5일선 별지점</b>: ${t_info['star_price']:.2f}\n"
             else:
                 body_msg += f"⚙️ 🎯 {t_info['target']}% | ⭐ {t_info['star_pct']}% | 🏎️가속 {t_info['turbo_txt']}\n"
             
-            proc_status = t_info['plan'].get('process_status', '')
             body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
             
             if t_info['plan']['orders']:
@@ -145,6 +145,7 @@ class TelegramView:
 
                 for o in n_orders:
                     ico = "🔴" if o['side'] == 'BUY' else "🔵"
+                    if "수혈" in o['desc']: ico = "🩸"
                     body_msg += f" {ico} {o['desc']}: <b>${o['price']} x {o['qty']}주</b> {'' if o['type']=='LIMIT' else f'({o['type']})'}\n"
 
                 if jup_orders:
@@ -196,7 +197,6 @@ class TelegramView:
 
         msg += f"📊 <b>[ 현재 진행 상황 요약 ]</b>\n"
         if not is_history:
-            # [V14.1 리버스모드] 장부에서도 리버스 상태 강조
             if is_reverse:
                 msg += f"▪️ 운용 상태 : 🚨 <b>시드 소진 (리버스모드 가동 중)</b>\n"
                 msg += f"▪️ 리버스 T값 : <b>{t_val} T</b> (특수연산 적용됨)\n"
@@ -265,7 +265,6 @@ class TelegramView:
         
         draw.text((W/2, H - 40), f"Graduation Date: {end_date}", font=f_b, fill="#636366", anchor="mm")
         
-        # [V14.2] 이미지도 data 폴더에 생성한 후 삭제하도록 경로 조정
         fname = f"data/profit_{ticker}_{end_date}.png"
         img.save(fname)
         return fname
@@ -277,4 +276,3 @@ class TelegramView:
             [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
-
