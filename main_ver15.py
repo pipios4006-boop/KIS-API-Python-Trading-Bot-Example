@@ -117,7 +117,8 @@ async def scheduled_premarket_monitor(context):
             broker.cancel_all_orders_safe(t)
             for o in plan['orders']:
                 res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
-                msg += f"\n└ {o['desc']}: {'✅' if res.get('rt_cd') == '0' else f'❌({res.get('msg1')})'}"
+                status_icon = "✅" if res.get('rt_cd') == "0" else f"❌({res.get('msg1')})"
+                msg += f"\n└ {o['desc']}: {status_icon}"
             await context.bot.send_message(chat_id=context.job.chat_id, text=msg, parse_mode='HTML')
 
 async def scheduled_regular_trade(context):
@@ -152,7 +153,8 @@ async def scheduled_regular_trade(context):
                 res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                 is_success = res.get('rt_cd') == '0'
                 if is_success: success_count += 1
-                msg += f"└ {o['desc']} {o['qty']}주: {'✅' if is_success else f'❌({res.get('msg1')})'}\n"
+                status_icon = "✅" if is_success else f"❌({res.get('msg1')})"
+                msg += f"└ {o['desc']} {o['qty']}주: {status_icon}\n"
             
             if success_count > 0:
                 cfg.set_lock(t, "REG")

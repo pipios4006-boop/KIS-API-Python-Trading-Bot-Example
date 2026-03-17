@@ -145,7 +145,8 @@ class TelegramView:
 
                 for o in n_orders:
                     ico = "🔴" if o['side'] == 'BUY' else "🔵"
-                    body_msg += f" {ico} {o['desc']}: <b>${o['price']} x {o['qty']}주</b> {'' if o['type']=='LIMIT' else f'({o['type']})'}\n"
+                    type_suffix = f"({o['type']})" if o['type'] != 'LIMIT' else ""
+                    body_msg += f" {ico} {o['desc']}: <b>${o['price']} x {o['qty']}주</b> {type_suffix}\n"
 
                 if jup_orders:
                     prices = sorted([o['price'] for o in jup_orders], reverse=True)

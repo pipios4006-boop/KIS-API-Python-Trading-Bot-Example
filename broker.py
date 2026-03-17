@@ -114,8 +114,11 @@ class KoreaInvestmentBroker:
         res = self._call_api("CTRP6504R", "/uapi/overseas-stock/v1/trading/inquire-present-balance", "GET", params=params)
         
         if res.get('rt_cd') == '0':
-            o2 = res.get('output2', {})
-            if isinstance(o2, list) and len(o2) > 0: o2 = o2[0]
+            o2 = res.get('output2')
+            if isinstance(o2, list):
+                o2 = o2[0] if len(o2) > 0 else {}
+            elif not isinstance(o2, dict):
+                o2 = {}
             
             dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))       
             sll_amt = self._safe_float(o2.get('frcr_sll_amt_smtl', 0))      
@@ -130,8 +133,11 @@ class KoreaInvestmentBroker:
         if res.get('rt_cd') == '0':
             holdings = {} 
             if cash <= 0:
-                o2 = res.get('output2', {})
-                if isinstance(o2, list) and len(o2) > 0: o2 = o2[0]
+                o2 = res.get('output2')
+                if isinstance(o2, list):
+                    o2 = o2[0] if len(o2) > 0 else {}
+                elif not isinstance(o2, dict):
+                    o2 = {}
                 cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
             
             for item in res.get('output1', []):

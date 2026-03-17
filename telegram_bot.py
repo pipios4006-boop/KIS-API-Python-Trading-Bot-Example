@@ -516,7 +516,8 @@ class TelegramController:
                 res = self.broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                 is_success = res.get('rt_cd') == '0'
                 if is_success: success_count += 1
-                msg += f"└ {o['desc']}: {'✅' if is_success else f'❌({res.get('msg1')})'}\n"
+                status_icon = "✅" if is_success else f"❌({res.get('msg1')})"
+                msg += f"└ {o['desc']}: {status_icon}\n"
             
             if success_count > 0:
                 self.cfg.set_lock(t, "REG")
