@@ -25,9 +25,9 @@
 
 ## 🛠️ 설치 및 실행 방법 (Installation & Usage)
 
-📌 **1. 필수 환경 (Requirements)**
-✔️ Python 3.9 이상
-✔️ 한국투자증권 Open API 발급 (App Key, App Secret)
+📌 **1. 필수 환경 (Requirements)**   
+✔️ Python 3.9 이상   
+✔️ 한국투자증권 Open API 발급 (App Key, App Secret)   
 ✔️ Telegram Bot Token 및 Chat ID
 
 📌 **2. 패키지 설치**  
