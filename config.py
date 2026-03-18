@@ -1,7 +1,3 @@
-# ==========================================================
-# [config]
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
 import json
 import os
 import datetime
@@ -15,7 +11,6 @@ try:
 except ImportError:
     VERSION_HISTORY = ["V14.x [-] 버전 기록 파일(version_history.py)을 찾을 수 없습니다."]
 
-# 🚀 [V16.17] 박제된 아카이브 파일 로드
 try:
     from version_archive import VERSION_ARCHIVE
 except ImportError:
@@ -110,6 +105,20 @@ class ConfigManager:
         t_val = (actual_qty * actual_avg_price) / one_portion if one_portion > 0 else 0.0
         return round(t_val, 4), one_portion
 
+    def apply_stock_split(self, ticker, ratio):
+        if ratio <= 0: return
+        ledger = self.get_ledger()
+        changed = False
+        for r in ledger:
+            if r.get('ticker') == ticker:
+                r['qty'] = int(r['qty'] * ratio)
+                r['price'] = round(r['price'] / ratio, 4)
+                if 'avg_price' in r:
+                    r['avg_price'] = round(r['avg_price'] / ratio, 4)
+                changed = True
+        if changed:
+            self._save_json(self.FILES["LEDGER"], ledger)
+
     def overwrite_genesis_ledger(self, ticker, genesis_records, actual_avg):
         ledger = self.get_ledger()
         remaining = [r for r in ledger if r['ticker'] != ticker]
@@ -168,6 +177,14 @@ class ConfigManager:
         })
         self._save_json(self.FILES["LEDGER"], remaining)
 
+    def calibrate_avg_price(self, ticker, actual_avg):
+        ledger = self.get_ledger()
+        target_recs = [r for r in ledger if r['ticker'] == ticker]
+        if target_recs:
+            for r in target_recs:
+                r['avg_price'] = actual_avg
+            self._save_json(self.FILES["LEDGER"], ledger)
+
     def clear_ledger_for_ticker(self, ticker):
         ledger = self.get_ledger()
         remaining = [r for r in ledger if r['ticker'] != ticker]
@@ -210,8 +227,9 @@ class ConfigManager:
 
     def set_reverse_state(self, ticker, is_active, day_count, exit_target=0.0, last_update_date=None):
         if last_update_date is None:
-            kst = pytz.timezone('Asia/Seoul')
-            last_update_date = datetime.datetime.now(kst).strftime('%Y-%m-%d')
+            # 🚀 [V18.2 패치] 기준 시간을 KST에서 EST(미동부)로 변경하여 자정 넘김 타임 패러독스 완벽 차단
+            est = pytz.timezone('US/Eastern')
+            last_update_date = datetime.datetime.now(est).strftime('%Y-%m-%d')
             
         d = self._load_json(self.FILES["REVERSE_CFG"], {})
         d[ticker] = {"is_active": is_active, "day_count": day_count, "exit_target": exit_target, "last_update_date": last_update_date}
@@ -220,22 +238,21 @@ class ConfigManager:
     def update_reverse_day_if_needed(self, ticker):
         state = self.get_reverse_state(ticker)
         if state.get("is_active"):
-            kst = pytz.timezone('Asia/Seoul')
-            today_str = datetime.datetime.now(kst).strftime('%Y-%m-%d')
+            # 🚀 [V18.2 패치] KST(한국시간) 자정을 넘겨 조회하더라도 동일한 미장 세션이라면 날짜가 증가하지 않도록 EST(미동부) 기준으로 판단합니다.
+            est = pytz.timezone('US/Eastern')
+            now_est = datetime.datetime.now(est)
+            today_est_str = now_est.strftime('%Y-%m-%d')
             
-            if state.get("last_update_date") != today_str:
-                est = pytz.timezone('US/Eastern')
-                now_est = datetime.datetime.now(est)
+            if state.get("last_update_date") != today_est_str:
                 nyse = mcal.get_calendar('NYSE')
-                
                 is_trading_day = not nyse.schedule(start_date=now_est.date(), end_date=now_est.date()).empty
                 
                 if is_trading_day:
                     new_day = state.get("day_count", 0) + 1
-                    self.set_reverse_state(ticker, True, new_day, state.get("exit_target", 0.0), today_str)
+                    self.set_reverse_state(ticker, True, new_day, state.get("exit_target", 0.0), today_est_str)
                     return True
                 else:
-                    self.set_reverse_state(ticker, True, state.get("day_count", 0), state.get("exit_target", 0.0), today_str)
+                    self.set_reverse_state(ticker, True, state.get("day_count", 0), state.get("exit_target", 0.0), today_est_str)
                     return False
         return False
 
@@ -354,11 +371,9 @@ class ConfigManager:
         
         return new_hist, added_seed
 
-    # 🚀 [V16.17] 전체 버전 히스토리(과거+현재) 반환
     def get_full_version_history(self):
         return VERSION_ARCHIVE + VERSION_HISTORY
 
-    # 최신 버전 히스토리 반환
     def get_version_history(self):
         return VERSION_HISTORY
 

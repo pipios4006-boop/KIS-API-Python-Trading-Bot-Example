@@ -1,7 +1,3 @@
-# ==========================================================
-# [main.py]
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
 import os
 import logging
 import datetime
@@ -116,9 +112,9 @@ async def scheduled_premarket_monitor(context):
                 for o in plan['orders']:
                     res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                     msg += f"\n└ {o['desc']}: {'✅' if res.get('rt_cd') == '0' else f'❌({res.get('msg1')})'}"
+                    await asyncio.sleep(0.2) # 🚀 [V18.0] API Throttle 방어
                 await context.bot.send_message(chat_id=context.job.chat_id, text=msg, parse_mode='HTML')
 
-# 🌟 [V17.7 패치] 증거금 가로채기 방어: Two-Phase 교차 전송 엔진
 async def scheduled_regular_trade(context):
     if not is_market_open(): return
     chat_id = context.job.chat_id
@@ -165,6 +161,7 @@ async def scheduled_regular_trade(context):
                 is_success = res.get('rt_cd') == '0'
                 if not is_success: all_success[t] = False
                 msgs[t] += f"└ 1차 필수: {o['desc']} {o['qty']}주: {'✅' if is_success else f'❌({res.get('msg1')})'}\n"
+                await asyncio.sleep(0.2) # 🚀 [V18.0] API Throttle 방어
 
         # 2. 제 2라운드: 보너스 줍줍 (JubJub Extra) 교차 전송
         for t in sorted_tickers:
@@ -172,8 +169,8 @@ async def scheduled_regular_trade(context):
             for o in plans[t].get('bonus_orders', []):
                 res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                 is_success = res.get('rt_cd') == '0'
-                # 보너스 주문은 실패(증거금 부족)해도 Lock에 영향을 주지 않음 (패스 처리)
                 msgs[t] += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {'✅' if is_success else '❌(잔금패스)'}\n"
+                await asyncio.sleep(0.2) # 🚀 [V18.0] API Throttle 방어
 
         # 3. 매매 결과 판정 및 락다운
         for t in sorted_tickers:

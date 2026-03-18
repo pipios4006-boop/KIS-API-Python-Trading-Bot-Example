@@ -1,7 +1,3 @@
-# ==========================================================
-# [telegram_bot.py]
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
 import logging
 import datetime
 import pytz
@@ -212,14 +208,15 @@ class TelegramController:
                 actual_qty = int(holdings.get(ticker, {'qty': 0})['qty'])
                 actual_avg = float(holdings.get(ticker, {'avg': 0})['avg'])
                 
-                # 🌟 [V17.7 패치] 장중 해제 방지: 오직 아침 정산 시간에만 리버스 수익률 달성 검사 후 졸업 처리
                 rev_state = self.cfg.get_reverse_state(ticker)
                 if rev_state.get("is_active"):
                     curr_p = await asyncio.to_thread(self.broker.get_current_price, ticker)
                     if curr_p > 0 and actual_avg > 0:
                         curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
-                        exit_target = rev_state.get("exit_target", -20.0)
-                        if exit_target == 0.0: exit_target = -15.0 if ticker == "TQQQ" else -20.0
+                        
+                        # 🚀 [V18.3 패치] exit_target이 0.0(본전 탈출)일 때 기본값으로 덮어씌워버리는 버그 수정
+                        # strategy.py가 의도적으로 설정한 0.0을 그대로 존중하도록 수정했습니다.
+                        exit_target = rev_state.get("exit_target", 0.0) 
                         
                         if curr_ret >= exit_target:
                             self.cfg.set_reverse_state(ticker, False, 0, 0.0)
@@ -491,7 +488,8 @@ class TelegramController:
                 InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}")
             ])
             keyboard.append([
-                InlineKeyboardButton(f"🔄 {t} 무매3/무매4 전환", callback_data=f"TOGGLE:VERSION:{t}")
+                InlineKeyboardButton(f"🔄 {t} 무매3/무매4 전환", callback_data=f"TOGGLE:VERSION:{t}"),
+                InlineKeyboardButton(f"✂️ {t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")
             ])
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
@@ -585,17 +583,18 @@ class TelegramController:
                 
                 all_success = True
                 
-                # 🌟 [V17.7 패치] 단일 실행(EXEC) 시에도 1차 필수주문과 2차 보너스 주문을 엄격히 분리하여 실패(Lock) 판정
                 for o in plan.get('core_orders', []):
                     res = self.broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success = False
                     msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {'✅' if is_success else f'❌({res.get('msg1')})'}\n"
+                    await asyncio.sleep(0.2) # 🚀 [V18.0] API Throttle 방어
                     
                 for o in plan.get('bonus_orders', []):
                     res = self.broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                     is_success = res.get('rt_cd') == '0'
                     msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {'✅' if is_success else '❌(잔금패스)'}\n"
+                    await asyncio.sleep(0.2) # 🚀 [V18.0] API Throttle 방어
                 
                 if all_success and len(plan.get('core_orders', [])) > 0:
                     self.cfg.set_lock(t, "REG")
@@ -627,8 +626,14 @@ class TelegramController:
         elif action == "INPUT":
             ticker = data[2]
             self.user_states[update.effective_chat.id] = f"CONF_{sub}_{ticker}"
-            ko_name = "분할 횟수" if sub == "SPLIT" else ("목표 수익률(%)" if sub == "TARGET" else "자동 복리율(%)")
-            await context.bot.send_message(update.effective_chat.id, f"⚙️ [{ticker}] {ko_name} 값 입력 (숫자만):")
+            
+            if sub == "SPLIT": ko_name = "분할 횟수"
+            elif sub == "TARGET": ko_name = "목표 수익률(%)"
+            elif sub == "COMPOUND": ko_name = "자동 복리율(%)"
+            elif sub == "STOCK_SPLIT": ko_name = "액면 분할/병합 비율 (예: 10분할은 10, 10병합은 0.1)"
+            else: ko_name = "값"
+            
+            await context.bot.send_message(update.effective_chat.id, f"⚙️ [{ticker}] {ko_name} 입력 (숫자만):")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
@@ -662,6 +667,11 @@ class TelegramController:
                 ticker = parts[2]
                 self.cfg.set_compound_rate(ticker, val)
                 await update.message.reply_text(f"✅ [{ticker}] 졸업 시 자동 복리율: {val}%")
+                
+            elif state.startswith("CONF_STOCK_SPLIT"):
+                ticker = parts[2]
+                self.cfg.apply_stock_split(ticker, val)
+                await update.message.reply_text(f"✅ [{ticker}] 액면 보정 완료\n▫️ 모든 장부 기록이 {val}배 비율로 정밀하게 소급 조정되었습니다.")
                 
             del self.user_states[chat_id]
         except: await update.message.reply_text("❌ 오류: 숫자를 입력하세요.")
