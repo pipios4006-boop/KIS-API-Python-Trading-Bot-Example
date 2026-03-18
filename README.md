@@ -51,17 +51,18 @@ ACNT_PRDT_CD=01 또는 22
 
 📌 4. 프로그램 실행
 
-python main_ver15.py
+python main.py
 
-(권장: 서버 환경에서는 nohup python main_ver15.py & 명령어를 사용하여 백그라운드에서 24시간 가동되도록 설정하세요.)
+(권장: 서버 환경에서는 nohup python main.py & 명령어를 사용하여 백그라운드에서 24시간 가동되도록 설정하세요.)
 
 ​📂 파일 구조 (Directory Structure)
 
-​📁 main_ver15.py: 스케줄러 구동 및 프로그램의 메인 진입점(Entry Point)  
+​📁 main.py: 스케줄러 구동 및 프로그램의 메인 진입점(Entry Point)  
 📁 broker.py: 한국투자증권 API 통신 및 데이터 가공을 담당하는 클래스.  
 📁 strategy.py: 예산 분배 및 특정 조건에 따른 매수/매도 알고리즘이 구현된 클래스.  
 📁 telegram_bot.py / telegram_view.py: 텔레그램 봇 라우터 및 화면(UI) 렌더링을 담당하는 클래스.  
 📁 config.py: 각종 JSON 데이터를 저장하고 불러오는 로컬 캐싱/설정 매니저.  
-📁 version_history.py: 코드 업데이트 히스토리 기록
+📁 version_history.py: 코드 업데이트 최신(16) 히스토리 기록  
+📁 version_archive.py: 코드 업데이트 과거버전(14~15) 히스토리 기록
 
 ```bash
