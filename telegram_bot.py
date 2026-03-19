@@ -1,7 +1,3 @@
-# ==========================================================
-# [telegram_bot.py]
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
 import logging
 import datetime
 import pytz
@@ -89,6 +85,11 @@ class TelegramController:
 
     async def cmd_v17(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
+        
+        # 🛡️ [V18.6 패치] 시크릿 자물쇠 로직 추가
+        if os.getenv("SECRET_MODE") != "ON":
+            return # .env에 설정이 없으면 철저하게 무시 (읽씹)
+
         args = context.args
         if not args:
             await update.message.reply_text("⚠️ 종목명을 함께 입력하세요. 예) /v17 TQQQ")
@@ -105,6 +106,11 @@ class TelegramController:
 
     async def cmd_v4(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
+        
+        # 🛡️ [V18.6 패치] 시크릿 자물쇠 로직 추가
+        if os.getenv("SECRET_MODE") != "ON":
+            return # .env에 설정이 없으면 철저하게 무시 (읽씹)
+
         for t in self.cfg.get_active_tickers():
             self.cfg.set_version(t, "V14")
         await update.message.reply_text("✅ <b>모든 종목이 오리지널 V4(무매4) 모드로 복귀했습니다.</b>", parse_mode='HTML')
