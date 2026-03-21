@@ -5,6 +5,7 @@ import pytz
 import math
 import time
 import shutil
+import tempfile
 import pandas_market_calendars as mcal
 
 try:
@@ -17,10 +18,11 @@ try:
 except ImportError:
     VERSION_ARCHIVE = []
 
-# ✨ V19.9 버전 업데이트 반영
-VERSION_HISTORY.append(
-    "V19.9 [2026.03.21] 액면분할/병합 완전 자동화 엔진 탑재 (✨자동모으기님 제안): 야후 파이낸스(yfinance) 분할 내역(Splits) 연동을 통해 장부 동기화 시 신규 액면분할 이벤트를 자동 감지. 중복 적용 방지용 메모리(split_history.json)를 도입하여 관리자의 개입 없이 장부 수량과 평단가를 100% 무인 자동 교정하는 진정한 방치형 로직 완성 (수정: config, broker, telegram_bot)"
-)
+# 🦇 [V19.10] 버전 추가 시 중복 방어
+_NEW_VERSION = "V19.10 [2026.03.21] 시스템 방탄 아키텍처 고도화 및 스나이퍼 로직 개조: JSON 원자적 쓰기(Atomic Write) 도입으로 비정상 종료 시 데이터 손실 원천 차단, 정규장 및 스나이퍼 예산 배분 로직 일치화, 구버전 파이썬 f-string 크래시 방어, 동시성 락(Race Condition) 해결, 타임존 경계 오류 수정, 거래소 하드코딩 제거. 스나이퍼 절대 기준을 '평단가'로 변경하여 공격적인 시장 폭락 줍줍 기회 창출 (수정: config, main, telegram_bot, broker, strategy)"
+
+if _NEW_VERSION not in VERSION_HISTORY:
+    VERSION_HISTORY.append(_NEW_VERSION)
 
 class ConfigManager:
     def __init__(self):
@@ -40,7 +42,7 @@ class ConfigManager:
             "REVERSE_CFG": "data/reverse_config.json",
             "BB_LOWER": "data/bb_lower.json",
             "SNIPER_CFG": "data/sniper_config.json",
-            "SPLIT_HISTORY": "data/split_history.json" # 🦇 [V19.9] 자동 분할 중복 적용 방지용 기억 장소 추가
+            "SPLIT_HISTORY": "data/split_history.json" 
         }
         
         self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
@@ -55,36 +57,60 @@ class ConfigManager:
             try:
                 with open(filename, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ [Config] JSON 로드 에러 ({filename}): {e}")
                 try:
                     shutil.copy(filename, filename + f".bak_{int(time.time())}")
-                except Exception:
-                    pass
+                except Exception as backup_e:
+                    print(f"⚠️ [Config] 백업 실패: {backup_e}")
                 return default if default is not None else {}
         return default if default is not None else {}
 
+    # 🦇 [V19.10] JSON 원자적 쓰기(Atomic Write) 도입: 정전 등 비정상 종료 시 파일 파괴(0 Byte) 원천 차단
     def _save_json(self, filename, data):
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        try:
+            dir_name = os.path.dirname(filename)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+                
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                
+            os.replace(temp_path, filename)
+        except Exception as e:
+            print(f"❌ [Config] JSON 저장 중 치명적 에러 발생 ({filename}): {e}")
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
 
     def _load_file(self, filename, default=None):
         if os.path.exists(filename):
             try:
-                with open(filename, 'r') as f:
+                with open(filename, 'r', encoding='utf-8') as f:
                     return f.read().strip()
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠️ [Config] 파일 로드 에러 ({filename}): {e}")
         return default
 
     def _save_file(self, filename, content):
-        with open(filename, 'w') as f:
-            f.write(str(content))
+        try:
+            dir_name = os.path.dirname(filename)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+                
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(str(content))
+            os.replace(temp_path, filename)
+        except Exception as e:
+            print(f"❌ [Config] 텍스트 파일 저장 에러 ({filename}): {e}")
 
-    # 🦇 [V19.9] 해당 종목의 마지막 액면분할 적용 날짜 불러오기
     def get_last_split_date(self, ticker):
         return self._load_json(self.FILES["SPLIT_HISTORY"], {}).get(ticker, "")
 
-    # 🦇 [V19.9] 해당 종목의 액면분할 적용 완료 날짜 덮어쓰기
     def set_last_split_date(self, ticker, date_str):
         d = self._load_json(self.FILES["SPLIT_HISTORY"], {})
         d[ticker] = date_str

@@ -10,6 +10,7 @@ import os
 import math
 import yfinance as yf
 import pytz
+import tempfile
 
 class KoreaInvestmentBroker:
     def __init__(self, app_key, app_secret, cano, acnt_prdt_cd="01"):
@@ -20,7 +21,9 @@ class KoreaInvestmentBroker:
         self.base_url = "https://openapi.koreainvestment.com:9443"
         self.token_file = f"data/token_{cano}.dat" 
         self.token = None
-        self._bb_19d_cache = {}  # 🦇 [V18.13] API 과부하 방지용 19일치 종가 전용 캐시 메모리
+        self._bb_19d_cache = {}  
+        self._excg_cd_cache = {} # 🦇 [V19.10] 거래소 코드 캐싱용 메모리 추가
+        
         self._get_access_token()
 
     def _get_access_token(self, force=False):
@@ -32,11 +35,11 @@ class KoreaInvestmentBroker:
                 if expire_time > datetime.datetime.now() + datetime.timedelta(hours=1):
                     self.token = saved['token']
                     return
-            except: pass
+            except Exception: pass
 
         if force and os.path.exists(self.token_file):
             try: os.remove(self.token_file)
-            except: pass
+            except Exception: pass
 
         url = f"{self.base_url}/oauth2/tokenP"
         body = {"grant_type": "client_credentials", "appkey": self.app_key, "appsecret": self.app_secret}
@@ -48,8 +51,14 @@ class KoreaInvestmentBroker:
                 self.token = data['access_token']
                 expire_str = (datetime.datetime.now() + datetime.timedelta(seconds=int(data['expires_in']))).strftime('%Y-%m-%d %H:%M:%S')
                 
-                with open(self.token_file, 'w') as f:
+                # 🦇 [V19.10] JSON 원자적 쓰기(Atomic Write) 적용: 토큰 파일 깨짐 방지
+                dir_name = os.path.dirname(self.token_file)
+                if dir_name and not os.path.exists(dir_name):
+                    os.makedirs(dir_name, exist_ok=True)
+                fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
                     json.dump({'token': self.token, 'expire': expire_str}, f)
+                os.replace(temp_path, self.token_file)
             else:
                 print(f"❌ [Broker] 토큰 발급 실패: {data.get('error_description', '알 수 없는 오류')}")
         except Exception as e:
@@ -104,7 +113,47 @@ class KoreaInvestmentBroker:
 
     def _safe_float(self, value):
         try: return float(str(value).replace(',', ''))
-        except: return 0.0
+        except Exception: return 0.0
+
+    # 🦇 [V19.10] 거래소 코드 동적 획득: 종목 추가 확장성 확보 (외부 모듈 의존성 제거, 자체 통신 로직 사용)
+    def _get_exchange_code(self, ticker, target_api="PRICE"):
+        if ticker in self._excg_cd_cache:
+            codes = self._excg_cd_cache[ticker]
+            return codes['PRICE'] if target_api == "PRICE" else codes['ORDER']
+
+        # 기본값 세팅 (캐싱 실패 시 최후 방어)
+        price_cd = "NAS"
+        order_cd = "NASD"
+
+        try:
+            # 512: 나스닥, 513: 뉴욕, 529: 아멕스 (가장 흔한 나스닥부터 찔러봄)
+            for prdt_type in ["512", "513", "529"]:
+                params = {
+                    "PRDT_TYPE_CD": prdt_type,
+                    "PDNO": ticker
+                }
+                res = self._call_api("CTPF1702R", "/uapi/overseas-price/v1/quotations/search-info", "GET", params=params)
+                
+                if res.get('rt_cd') == '0' and res.get('output'):
+                    excg_name = str(res['output'].get('ovrs_excg_cd', '')).upper()
+                    if "NASD" in excg_name or "NASDAQ" in excg_name:
+                        price_cd, order_cd = "NAS", "NASD"
+                        break
+                    elif "NYSE" in excg_name or "NEW YORK" in excg_name:
+                        price_cd, order_cd = "NYS", "NYSE"
+                        break
+                    elif "AMEX" in excg_name:
+                        price_cd, order_cd = "AMS", "AMEX"
+                        break
+        except Exception as e:
+            print(f"⚠️ [Broker] 거래소 코드 동적 획득 실패 (기본값 NAS/NASD 사용): {ticker} - {e}")
+
+        # 수동 핫픽스 (조회 실패 시 최후 보루)
+        if ticker == "SOXL": price_cd, order_cd = "AMS", "AMEX"
+        elif ticker == "TQQQ": price_cd, order_cd = "NAS", "NASD"
+
+        self._excg_cd_cache[ticker] = {'PRICE': price_cd, 'ORDER': order_cd}
+        return price_cd if target_api == "PRICE" else order_cd
 
     def get_account_balance(self):
         cash = 0.0
@@ -153,7 +202,7 @@ class KoreaInvestmentBroker:
             print(f"⚠️ [야후 파이낸스] 현재가 에러, 한투 API 우회 가동: {e}")
 
         try:
-            excg_cd = "AMS" if ticker == "SOXL" else "NAS"
+            excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
             res = self._call_api("HHDFS76200200", "/uapi/overseas-price/v1/quotations/price", "GET", params=params)
             if res.get('rt_cd') == '0':
@@ -164,7 +213,7 @@ class KoreaInvestmentBroker:
         
     def get_ask_price(self, ticker):
         try:
-            excg_cd = "AMS" if ticker == "SOXL" else "NAS"
+            excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
             res = self._call_api("HHDFS76200100", "/uapi/overseas-price/v1/quotations/inquire-asking-price", "GET", params=params)
             if res.get('rt_cd') == '0':
@@ -179,7 +228,7 @@ class KoreaInvestmentBroker:
 
     def get_bid_price(self, ticker):
         try:
-            excg_cd = "AMS" if ticker == "SOXL" else "NAS"
+            excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
             res = self._call_api("HHDFS76200100", "/uapi/overseas-price/v1/quotations/inquire-asking-price", "GET", params=params)
             if res.get('rt_cd') == '0':
@@ -198,7 +247,7 @@ class KoreaInvestmentBroker:
             print(f"⚠️ [야후 파이낸스] 전일종가 에러, 한투 API 우회 가동: {e}")
 
         try:
-            excg_cd = "AMS" if ticker == "SOXL" else "NAS"
+            excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
             res = self._call_api("HHDFS76200200", "/uapi/overseas-price/v1/quotations/price", "GET", params=params)
             if res.get('rt_cd') == '0':
@@ -216,7 +265,7 @@ class KoreaInvestmentBroker:
             print(f"⚠️ [야후 파이낸스] MA5 에러, 한투 API 우회 가동: {e}")
             
         try:
-            excg_cd = "AMS" if ticker == "SOXL" else "NAS"
+            excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {
                 "AUTH": "", "EXCD": excg_cd, "SYMB": ticker,
                 "GUBN": "0", "BYMD": "", "MODP": "1"
@@ -232,7 +281,6 @@ class KoreaInvestmentBroker:
             
         return 0.0
 
-    # 🦇 [V18.13] 다이내믹 트랩 핵심: 19일 캐싱 + 실시간 현재가 결합 재계산 엔진
     def get_bb_lower(self, ticker, current_price=None):
         est = pytz.timezone('US/Eastern')
         today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
@@ -240,18 +288,15 @@ class KoreaInvestmentBroker:
         
         closes_19d = []
         
-        # 1. 19일치 과거 데이터 뇌(캐시)에서 탐색
         if ticker in self._bb_19d_cache and self._bb_19d_cache[ticker]['date'] == today_str:
             closes_19d = self._bb_19d_cache[ticker]['closes']
         else:
-            # 캐시가 없으면 딱 1번만 야후(또는 한투) API를 찔러서 어제까지의 19개 데이터를 구함
             try:
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period="30d") 
                 if not hist.empty:
                     if hist.index.tz is None: hist.index = hist.index.tz_localize('UTC')
                     hist_est = hist.index.tz_convert('US/Eastern')
-                    # 오늘 날짜를 제외한 과거 확정 데이터만 추출
                     past_hist = hist[hist_est.strftime('%Y-%m-%d') < today_str]
                     if len(past_hist) >= 19:
                         closes_19d = past_hist['Close'].tolist()[-19:]
@@ -261,30 +306,26 @@ class KoreaInvestmentBroker:
                 
             if not closes_19d:
                 try:
-                    excg_cd = "AMS" if ticker == "SOXL" else "NAS"
+                    excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
                     params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker, "GUBN": "0", "BYMD": "", "MODP": "1"}
                     res = self._call_api("HHDFS76240000", "/uapi/overseas-price/v1/quotations/dailyprice", "GET", params=params)
                     if res.get('rt_cd') == '0':
                         output2 = res.get('output2', [])
-                        # KIS API에서 오늘 날짜 제외하고 과거 19일 확보
                         past_output = [x for x in output2 if x.get('stck_bsop_date', '99999999') < today_kis]
                         if len(past_output) >= 19:
                             closes_19d = [float(x['clos']) for x in past_output[:19]]
-                            closes_19d.reverse() # 최신순을 과거->최신순으로 뒤집기
+                            closes_19d.reverse() 
                             self._bb_19d_cache[ticker] = {'date': today_str, 'closes': closes_19d}
                 except Exception as e:
                     print(f"❌ [한투 API] 19일치 과거 데이터 우회 조회 실패: {e}")
 
-        # 캐싱 실패 시 안전하게 0 반환
         if len(closes_19d) < 19:
             return 0.0
 
-        # 2. 19개 데이터 끝에 '실시간 현재가'를 슬쩍 끼워넣기 (20일치 세팅 완료)
         target_closes = closes_19d.copy()
         real_time_p = float(current_price) if current_price and current_price > 0 else self.get_current_price(ticker)
         target_closes.append(real_time_p)
         
-        # 3. 20일치 배열을 통째로 갈아서 즉석 평균, 표준편차 도출
         ma20 = sum(target_closes) / 20.0
         variance = sum([((x - ma20) ** 2) for x in target_closes]) / 19.0
         std20 = math.sqrt(variance)
@@ -293,7 +334,7 @@ class KoreaInvestmentBroker:
         return real_time_bb_lower
 
     def get_unfilled_orders(self, ticker):
-        excg_cd = "AMEX" if ticker == "SOXL" else "NASD"
+        excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": "", "CTX_AREA_NK200": ""}
         res = self._call_api("TTTS3018R", "/uapi/overseas-stock/v1/trading/inquire-nccs", "GET", params=params)
         if res.get('rt_cd') == '0':
@@ -303,7 +344,7 @@ class KoreaInvestmentBroker:
         return []
 
     def get_unfilled_orders_detail(self, ticker):
-        excg_cd = "AMEX" if ticker == "SOXL" else "NASD"
+        excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": "", "CTX_AREA_NK200": ""}
         res = self._call_api("TTTS3018R", "/uapi/overseas-stock/v1/trading/inquire-nccs", "GET", params=params)
         if res.get('rt_cd') == '0':
@@ -338,7 +379,7 @@ class KoreaInvestmentBroker:
 
     def send_order(self, ticker, side, qty, price, order_type="LIMIT"):
         tr_id = "TTTT1002U" if side == "BUY" else "TTTT1006U"
-        excg_cd = "AMEX" if ticker == "SOXL" else "NASD"
+        excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
 
         if order_type == "LOC": ord_dvsn = "34"
         elif order_type == "MOC": ord_dvsn = "33"
@@ -358,7 +399,7 @@ class KoreaInvestmentBroker:
         return {'rt_cd': res.get('rt_cd'), 'msg1': res.get('msg1')}
 
     def cancel_order(self, ticker, order_id):
-        excg_cd = "AMEX" if ticker == "SOXL" else "NASD"
+        excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         body = {
             "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd,
             "PDNO": ticker, "ORGN_ODNO": order_id, "RVSE_CNCL_DVSN_CD": "02",
@@ -367,7 +408,7 @@ class KoreaInvestmentBroker:
         self._call_api("TTTT1004U", "/uapi/overseas-stock/v1/trading/order-rvsecncl", "POST", body=body)
 
     def get_execution_history(self, ticker, start_date, end_date):
-        excg_cd = "AMEX" if ticker == "SOXL" else "NASD"
+        excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         valid_execs = []
         seen_keys = set()
         fk200 = ""
@@ -424,8 +465,10 @@ class KoreaInvestmentBroker:
         est = pytz.timezone('US/Eastern')
         target_date = datetime.datetime.now(est)
         genesis_reached = False
+        loop_counter = 0 
         
-        while curr_qty > 0 and not genesis_reached:
+        while curr_qty > 0 and not genesis_reached and loop_counter < 365:
+            loop_counter += 1
             date_str = target_date.strftime('%Y%m%d')
             
             if limit_date_str and date_str < limit_date_str:
@@ -464,19 +507,16 @@ class KoreaInvestmentBroker:
                         
             target_date -= datetime.timedelta(days=1)
             time.sleep(0.1) 
-            if (datetime.datetime.now(est) - target_date).days > 365: break 
                 
         ledger_records.reverse()
         return ledger_records, final_qty, final_avg
 
-    # 🦇 [V19.9] 야후 파이낸스 최근 액면분할/병합 내역 스캔 엔진 추가
     def get_recent_stock_split(self, ticker, last_date_str):
         try:
             stock = yf.Ticker(ticker)
             splits = stock.splits
             if splits is not None and not splits.empty:
                 
-                # 🛡️ 긴급 핫픽스: 기록이 아예 없을 경우 10년 전이 아니라 '최근 7일'로 기준을 강제 설정
                 if last_date_str == "":
                     est = pytz.timezone('US/Eastern')
                     seven_days_ago = datetime.datetime.now(est) - datetime.timedelta(days=7)

@@ -17,7 +17,7 @@ class TelegramController:
         self.view = TelegramView()
         self.user_states = {} 
         self.admin_id = self.cfg.get_chat_id()
-        self.sync_locks = {} 
+        self.sync_locks = {} # 🦇 [V19.10] 동시성 충돌(Race Condition) 방어를 위해 asyncio.Lock 객체 저장소로 활용
         self.tx_lock = tx_lock or asyncio.Lock()
 
     def _is_admin(self, update: Update):
@@ -233,9 +233,14 @@ class TelegramController:
         self.cfg.set_escrow_cash(ticker, max(0.0, escrow))
 
     async def process_auto_sync(self, ticker, chat_id, context, silent_ledger=False):
-        if self.sync_locks.get(ticker, False): return "LOCKED"
-        self.sync_locks[ticker] = True 
-        try:
+        # 🦇 [V19.10] 동시성 충돌(Race Condition) 완벽 방어: asyncio.Lock 사용
+        if ticker not in self.sync_locks:
+            self.sync_locks[ticker] = asyncio.Lock()
+            
+        if self.sync_locks[ticker].locked(): 
+            return "LOCKED"
+            
+        async with self.sync_locks[ticker]:
             async with self.tx_lock:
                 
                 # 🦇 [V19.9] 액면분할/병합 자동 감지 및 백그라운드 소급 적용 엔진
@@ -313,12 +318,10 @@ class TelegramController:
                 target_execs = self.broker.get_execution_history(ticker, target_kis_str, target_kis_str)
                 kis_target_trades = len(target_execs)
                 
-                is_only_snapshot = (len(recs) == 1 and 'INIT' in str(recs[0].get('exec_id', '')))
                 ledger_target_trades = len([r for r in recs if r['date'] == target_ledger_str and 'INIT' not in str(r.get('exec_id', ''))])
                 
+                # 🦇 [V19.10] 도달 불가 데드코드(Dead Code) 제거로 무결성 로직 선명도 강화
                 if diff == 0 and price_diff < 0.01:
-                    micro_mismatch = False
-                elif is_only_snapshot and diff == 0 and price_diff < 0.01:
                     micro_mismatch = False
                 else:
                     has_init_today = any('INIT' in str(r.get('exec_id', '')) for r in recs if r['date'] == target_ledger_str)
@@ -395,9 +398,6 @@ class TelegramController:
 
                 if not silent_ledger: await self._display_ledger(ticker, chat_id, context)
                 return "SUCCESS"
-            
-        finally:
-            self.sync_locks[ticker] = False
 
     async def _display_ledger(self, ticker, chat_id, context, query=None, message_obj=None):
         recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
@@ -596,7 +596,7 @@ class TelegramController:
                 await self._display_ledger(data[2], update.effective_chat.id, context, query=query)
             elif sub == "SYNC": 
                 ticker = data[2]
-                if not self.sync_locks.get(ticker, False):
+                if not self.sync_locks[ticker].locked():
                     await query.edit_message_text(f"🔄 <b>[{ticker}] 잔고 기반 대시보드 업데이트 중...</b>", parse_mode='HTML')
                     res = await self.process_auto_sync(ticker, update.effective_chat.id, context, silent_ledger=True)
                     if res == "SUCCESS": await self._display_ledger(ticker, update.effective_chat.id, context, message_obj=query.message)
@@ -643,13 +643,18 @@ class TelegramController:
                     res = self.broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success = False
-                    msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {'✅' if is_success else f'❌({res.get('msg1')})'}\n"
+                    # 🦇 [V19.10] 구버전 파이썬 f-string 중첩 따옴표 SyntaxError 크래시 방어 완벽 적용
+                    err_msg = res.get('msg1', '오류')
+                    status_icon = '✅' if is_success else f'❌({err_msg})'
+                    msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
                     await asyncio.sleep(0.2) 
                     
                 for o in plan.get('bonus_orders', []):
                     res = self.broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                     is_success = res.get('rt_cd') == '0'
-                    msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {'✅' if is_success else '❌(잔금패스)'}\n"
+                    err_msg = res.get('msg1', '잔금패스')
+                    status_icon = '✅' if is_success else f'❌({err_msg})'
+                    msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
                     await asyncio.sleep(0.2) 
                 
                 if all_success and len(plan.get('core_orders', [])) > 0:

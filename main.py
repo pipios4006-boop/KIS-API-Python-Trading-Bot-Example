@@ -22,11 +22,21 @@ if not os.path.exists('logs'):
 load_dotenv() 
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID")) if os.getenv("ADMIN_CHAT_ID") else None
+# 🦇 [V19.10] 환경변수 미검증 방어: ADMIN_CHAT_ID가 없을 경우 None 처리 후 텔레그램 컨트롤러에서 차단
+try:
+    ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID")) if os.getenv("ADMIN_CHAT_ID") else None
+except ValueError:
+    ADMIN_CHAT_ID = None
+
+# 🦇 [V19.10] 환경변수 미검증 방어: 한투 API 필수 키 누락 시 프로그램 기동 중단 (크래시 방어)
 APP_KEY = os.getenv("APP_KEY")
 APP_SECRET = os.getenv("APP_SECRET")
 CANO = os.getenv("CANO")
 ACNT_PRDT_CD = os.getenv("ACNT_PRDT_CD", "01")
+
+if not all([APP_KEY, APP_SECRET, CANO]):
+    print("❌ [치명적 오류] .env 파일에 한투 API 필수 키(APP_KEY, APP_SECRET, CANO)가 누락되었습니다. 봇을 종료합니다.")
+    exit(1)
 
 log_filename = f"logs/bot_app_{datetime.datetime.now().strftime('%Y%m%d')}.log"
 logging.basicConfig(
@@ -51,26 +61,59 @@ def is_market_open():
     nyse = mcal.get_calendar('NYSE')
     return not nyse.schedule(start_date=today, end_date=today).empty
 
+# 🦇 [V19.10] 예산 배분 로직 일치화 (심각한 논리 버그 수정)
+# main.py의 스나이퍼 및 정규장 스케줄러가 리버스 모드 종목의 예산을 0으로 처리하도록 telegram_bot과 동일한 로직 적용
 def get_budget_allocation(cash, tickers, cfg):
     sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
-    total_req, portions = 0, {}
+    allocated = {}
+    force_turbo_off = False
+    rem_cash = cash
     
     for tx in sorted_tickers:
-        split = cfg.get_split_count(tx)
-        portion = cfg.get_seed(tx) / split if split > 0 else 0
-        portions[tx] = portion
-        total_req += portion
+        rev_state = cfg.get_reverse_state(tx)
+        is_rev = rev_state.get("is_active", False)
         
-    force_turbo_off = cash < total_req
-    rem_cash, allocated = cash, {}
-    
-    for tx in sorted_tickers:
-        if rem_cash >= portions[tx]:
-            allocated[tx] = rem_cash 
-            rem_cash -= portions[tx] 
-        else: allocated[tx] = 0 
+        if is_rev:
+            portion = 0.0
+        else:
+            split = cfg.get_split_count(tx)
+            portion = cfg.get_seed(tx) / split if split > 0 else 0
             
+        if rem_cash >= portion:
+            allocated[tx] = rem_cash
+            rem_cash -= portion
+        else: 
+            allocated[tx] = 0
+            if not is_rev:
+                force_turbo_off = True 
+                
     return sorted_tickers, allocated, force_turbo_off
+
+# 🦇 [V19.10] 스나이퍼 모니터 코드 3중 중복 제거: 실제 체결가 역산 공통 헬퍼 함수
+def get_actual_execution_price(execs, target_qty, side_cd):
+    if not execs: return 0.0
+    
+    execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
+    matched_qty = 0
+    total_amt = 0.0
+    for ex in execs:
+        if ex.get('sll_buy_dvsn_cd') == side_cd: 
+            eqty = int(float(ex.get('ft_ccld_qty', '0')))
+            eprice = float(ex.get('ft_ccld_unpr3', '0'))
+            if matched_qty + eqty <= target_qty:
+                total_amt += eqty * eprice
+                matched_qty += eqty
+            elif matched_qty < target_qty:
+                rem = target_qty - matched_qty
+                total_amt += rem * eprice
+                matched_qty += rem
+            
+            if matched_qty >= target_qty:
+                break
+    
+    if matched_qty > 0:
+        return math.floor((total_amt / matched_qty) * 100) / 100.0
+    return 0.0
 
 async def scheduled_token_check(context):
     context.job.data['broker']._get_access_token(force=True)
@@ -125,7 +168,10 @@ async def scheduled_premarket_monitor(context):
                 broker.cancel_all_orders_safe(t)
                 for o in plan['orders']:
                     res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
-                    msg += f"\n└ {o['desc']}: {'✅' if res.get('rt_cd') == '0' else f'❌({res.get('msg1')})'}"
+                    # 🦇 [V19.10] 구버전 파이썬 f-string 중첩 따옴표 SyntaxError 크래시 방어
+                    err_msg = res.get('msg1')
+                    is_success = res.get('rt_cd') == '0'
+                    msg += f"\n└ {o['desc']}: {'✅' if is_success else f'❌({err_msg})'}"
                     await asyncio.sleep(0.2) 
                 await context.bot.send_message(chat_id=context.job.chat_id, text=msg, parse_mode='HTML')
 
@@ -212,33 +258,14 @@ async def scheduled_sniper_monitor(context):
                                 if not buy_unfilled:
                                     cfg.set_lock(t, "SNIPER") 
                                     
-                                    kst = pytz.timezone('Asia/Seoul')
-                                    today_kis_str = datetime.datetime.now(kst).strftime('%Y%m%d')
-                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_kis_str, today_kis_str)
+                                    # 🦇 [V19.10] 타임존 경계 오류 수정: KST 대신 EST 기준 날짜 사용
+                                    today_est_str = datetime.datetime.now(est).strftime('%Y%m%d')
+                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
                                     
-                                    actual_buy_price = target_buy_price 
+                                    actual_buy_price = target_buy_price
                                     if execs:
-                                        execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
-                                        matched_qty = 0
-                                        total_amt = 0.0
-                                        for ex in execs:
-                                            if ex.get('sll_buy_dvsn_cd') == '02': 
-                                                eqty = int(float(ex.get('ft_ccld_qty', '0')))
-                                                eprice = float(ex.get('ft_ccld_unpr3', '0'))
-                                                if matched_qty + eqty <= buy_qty:
-                                                    total_amt += eqty * eprice
-                                                    matched_qty += eqty
-                                                elif matched_qty < buy_qty:
-                                                    rem = buy_qty - matched_qty
-                                                    total_amt += rem * eprice
-                                                    matched_qty += rem
-                                                
-                                                if matched_qty >= buy_qty:
-                                                    break
-                                        
-                                        if matched_qty > 0:
-                                            actual_buy_price = total_amt / matched_qty
-                                            actual_buy_price = math.floor(actual_buy_price * 100) / 100.0
+                                        computed_price = get_actual_execution_price(execs, buy_qty, '02')
+                                        if computed_price > 0: actual_buy_price = computed_price
 
                                     msg = f"💥 <b>[{t}] V19.1 하이브리드 덫 명중! ({trigger_reason} 이탈)</b>\n"
                                     msg += f"📉 실시간 현재가(${curr_p:.2f})가 <b>[{trigger_reason}]</b> 기준선(${target_buy_price:.2f})마저 뚫었습니다!\n"
@@ -304,33 +331,13 @@ async def scheduled_sniper_monitor(context):
                             if not sell_unfilled:
                                 cfg.set_lock(t, "SNIPER")
                                 
-                                kst = pytz.timezone('Asia/Seoul')
-                                today_kis_str = datetime.datetime.now(kst).strftime('%Y%m%d')
-                                execs = await asyncio.to_thread(broker.get_execution_history, t, today_kis_str, today_kis_str)
+                                today_est_str = datetime.datetime.now(est).strftime('%Y%m%d')
+                                execs = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
                                 
                                 actual_sell_price = bid_price 
                                 if execs:
-                                    execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
-                                    matched_qty = 0
-                                    total_amt = 0.0
-                                    for ex in execs:
-                                        if ex.get('sll_buy_dvsn_cd') == '01': 
-                                            eqty = int(float(ex.get('ft_ccld_qty', '0')))
-                                            eprice = float(ex.get('ft_ccld_unpr3', '0'))
-                                            if matched_qty + eqty <= qty:
-                                                total_amt += eqty * eprice
-                                                matched_qty += eqty
-                                            elif matched_qty < qty:
-                                                rem = qty - matched_qty
-                                                total_amt += rem * eprice
-                                                matched_qty += rem
-                                            
-                                            if matched_qty >= qty:
-                                                break
-                                    
-                                    if matched_qty > 0:
-                                        actual_sell_price = total_amt / matched_qty
-                                        actual_sell_price = math.floor(actual_sell_price * 100) / 100.0
+                                    computed_price = get_actual_execution_price(execs, qty, '01')
+                                    if computed_price > 0: actual_sell_price = computed_price
 
                                 msg = f"🔥 <b>[{t}] 스나이퍼 잭팟 터짐! (목표가 돌파)</b>\n"
                                 msg += f"🎯 실시간 매수 1호가(${bid_price:.2f})가 목표가(${target_price:.2f})를 돌파하여 <b>실제 단가 ${actual_sell_price:.2f}에 전량 강제 익절</b> 처리했습니다.\n"
@@ -397,33 +404,13 @@ async def scheduled_sniper_monitor(context):
                                     cfg.set_lock(t, "SNIPER")
                                     phase = "전반전(별값 돌파)" if is_first_half else "후반전(본전+수수료 돌파)"
                                     
-                                    kst = pytz.timezone('Asia/Seoul')
-                                    today_kis_str = datetime.datetime.now(kst).strftime('%Y%m%d')
-                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_kis_str, today_kis_str)
+                                    today_est_str = datetime.datetime.now(est).strftime('%Y%m%d')
+                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
                                     
                                     actual_sell_price = bid_price 
                                     if execs:
-                                        execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
-                                        matched_qty = 0
-                                        total_amt = 0.0
-                                        for ex in execs:
-                                            if ex.get('sll_buy_dvsn_cd') == '01': 
-                                                eqty = int(float(ex.get('ft_ccld_qty', '0')))
-                                                eprice = float(ex.get('ft_ccld_unpr3', '0'))
-                                                if matched_qty + eqty <= q_qty:
-                                                    total_amt += eqty * eprice
-                                                    matched_qty += eqty
-                                                elif matched_qty < q_qty:
-                                                    rem = q_qty - matched_qty
-                                                    total_amt += rem * eprice
-                                                    matched_qty += rem
-                                                
-                                                if matched_qty >= q_qty:
-                                                    break
-                                        
-                                        if matched_qty > 0:
-                                            actual_sell_price = total_amt / matched_qty
-                                            actual_sell_price = math.floor(actual_sell_price * 100) / 100.0
+                                        computed_price = get_actual_execution_price(execs, q_qty, '01')
+                                        if computed_price > 0: actual_sell_price = computed_price
 
                                     msg = f"🔫 <b>[{t}] V17 시크릿 쿼터 익절 발동! ({phase})</b>\n"
                                     msg += f"🎯 실시간 매수 1호가: ${bid_price:.2f} (트리거: ${trigger_price:.2f})\n"
@@ -444,7 +431,8 @@ async def scheduled_sniper_monitor(context):
                                         msg += "\n🦇 <b>[스마트 방어 매수 장전] (플랜 B 전환)</b>\n"
                                         for o in smart_cores:
                                             buy_res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
-                                            msg += f"└ {o['desc']} {o['qty']}주: {'✅' if buy_res.get('rt_cd') == '0' else f'❌({buy_res.get('msg1')})'}\n"
+                                            err_msg = buy_res.get('msg1')
+                                            msg += f"└ {o['desc']} {o['qty']}주: {'✅' if buy_res.get('rt_cd') == '0' else f'❌({err_msg})'}\n"
                                             await asyncio.sleep(0.2)
                                         for o in smart_bonus:
                                             buy_res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
@@ -530,7 +518,8 @@ async def scheduled_regular_trade(context):
                 res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                 is_success = res.get('rt_cd') == '0'
                 if not is_success: all_success[t] = False
-                msgs[t] += f"└ 1차 필수: {o['desc']} {o['qty']}주: {'✅' if is_success else f'❌({res.get('msg1')})'}\n"
+                err_msg = res.get('msg1')
+                msgs[t] += f"└ 1차 필수: {o['desc']} {o['qty']}주: {'✅' if is_success else f'❌({err_msg})'}\n"
                 await asyncio.sleep(0.2) 
 
         for t in sorted_tickers:
