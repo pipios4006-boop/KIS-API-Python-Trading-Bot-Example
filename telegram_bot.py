@@ -223,7 +223,14 @@ class TelegramController:
             return
 
         ledger = self.cfg.get_ledger()
-        target_recs = [r for r in ledger if r.get('ticker') == ticker and r.get('is_reverse', False)]
+        
+        target_recs = []
+        for r in reversed(ledger):
+            if r.get('ticker') == ticker:
+                if r.get('is_reverse', False):
+                    target_recs.append(r)
+                else:
+                    break
         
         escrow = 0.0
         for r in target_recs:
@@ -269,6 +276,16 @@ class TelegramController:
                         if curr_ret >= exit_target:
                             self.cfg.set_reverse_state(ticker, False, 0, 0.0)
                             self.cfg.clear_escrow_cash(ticker)
+                            
+                            ledger_data = self.cfg.get_ledger()
+                            changed = False
+                            for lr in ledger_data:
+                                if lr.get('ticker') == ticker and lr.get('is_reverse', False):
+                                    lr['is_reverse'] = False
+                                    changed = True
+                            if changed:
+                                self.cfg._save_json(self.cfg.FILES["LEDGER"], ledger_data)
+                                
                             await context.bot.send_message(chat_id, f"🌤️ <b>[{ticker}] 리버스 목표 달성({curr_ret:.2f}%)!</b>\n격리 병동을 공식 졸업하고 가상 장부(Escrow)를 해제합니다.", parse_mode='HTML')
                 
                 recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
@@ -550,7 +567,17 @@ class TelegramController:
                 ticker = data[2]
                 self.cfg.set_reverse_state(ticker, False, 0)
                 self.cfg.clear_escrow_cash(ticker) 
-                await query.edit_message_text(f"✅ <b>[{ticker}] 리버스 모드 및 가상장부(Escrow)가 모두 강제 초기화되었습니다.</b>\n(다음 주문부터 일반 모드로 복귀합니다.)", parse_mode='HTML')
+                
+                ledger_data = self.cfg.get_ledger()
+                changed = False
+                for lr in ledger_data:
+                    if lr.get('ticker') == ticker and lr.get('is_reverse', False):
+                        lr['is_reverse'] = False
+                        changed = True
+                if changed:
+                    self.cfg._save_json(self.cfg.FILES["LEDGER"], ledger_data)
+                    
+                await query.edit_message_text(f"✅ <b>[{ticker}] 리버스 모드 및 가상장부(Escrow)가 모두 강제 초기화되었습니다.</b>\n(과거 리버스 꼬리표 소각 완료. 다음 주문부터 일반 모드로 복귀합니다.)", parse_mode='HTML')
             elif sub == "CANCEL":
                 await query.edit_message_text("❌ 안전 통제실 메뉴를 닫습니다.", parse_mode='HTML')
 
@@ -588,7 +615,7 @@ class TelegramController:
             await query.edit_message_text(f"🚀 {t} 수동 강제 전송 시작 (교차 분리)...")
             async with self.tx_lock:
                 cash, holdings = self.broker.get_account_balance()
-                if holdings is None: return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수문을 실행할 수 없습니다.")
+                if holdings is None: return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
                     
                 _, allocated_cash, force_turbo_off = self._calculate_budget_allocation(cash, self.cfg.get_active_tickers())
                 h = holdings.get(t, {'qty':0, 'avg':0})
