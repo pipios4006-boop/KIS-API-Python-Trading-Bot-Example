@@ -24,6 +24,7 @@ class TelegramController:
         self.admin_id = self.cfg.get_chat_id()
         self.sync_locks = {} 
         self.tx_lock = tx_lock or asyncio.Lock()
+        self.panic_alerts = {} # 🔥 V21.7 패닉 알림 하루 1회 발송용 메모리 추가
 
     def _is_admin(self, update: Update):
         if self.admin_id is None:
@@ -159,8 +160,21 @@ class TelegramController:
                 
                 dynamic_pct = await asyncio.to_thread(self.broker.get_dynamic_sniper_target, idx_ticker, weight)
                 
+                # 🔥 V21.7 패닉 속성 안전 추출 (에러 방어)
+                is_panic = getattr(dynamic_pct, 'is_panic', False)
+                gap_pct = getattr(dynamic_pct, 'gap_pct', 0.0)
+                
                 if dynamic_pct is None:
                     dynamic_pct = 9.0 if t == "SOXL" else 5.0
+                
+                # 🔥 V21.7 패닉 감지 시 텔레그램 긴급 알림 발송 (하루 1회)
+                if is_panic:
+                    today_str = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+                    alert_key = f"{t}_{today_str}"
+                    if alert_key not in self.panic_alerts:
+                        alert_msg = f"🚨 <b>[긴급] {t} 패닉 갭 하락 감지! ({gap_pct}%)</b>\nV17 스나이퍼가 상한선 족쇄를 풀고 심해(<b>-{dynamic_pct}%</b>) 타점으로 자동 투입되었습니다!"
+                        await update.message.reply_text(alert_msg, parse_mode='HTML')
+                        self.panic_alerts[alert_key] = True
                 
                 hybrid_target_price = safe_prev_close * (1 - (dynamic_pct / 100.0))
                 
@@ -171,10 +185,11 @@ class TelegramController:
                     elif hybrid_target_price >= ma_5day:
                         trigger_reason = "🛑(5일선 위 과열)"
                     else:
-                        trigger_reason = f"-{dynamic_pct}%"
+                        # 🔥 V21.7 패닉 상태면 뷰어 문구 변경
+                        trigger_reason = f"🌪️패닉(-{dynamic_pct}%)" if is_panic else f"-{dynamic_pct}%"
                 else:
                     is_sniper_active = True
-                    trigger_reason = f"-{dynamic_pct}%"
+                    trigger_reason = f"🌪️패닉(-{dynamic_pct}%)" if is_panic else f"-{dynamic_pct}%"
                 
                 is_already_ordered = self.cfg.check_lock(t, "REG") or self.cfg.check_lock(t, "SNIPER")
                 
@@ -214,7 +229,7 @@ class TelegramController:
                     'hybrid_base': 0.0, 
                     'hybrid_target': hybrid_target_price,
                     'trigger_reason': trigger_reason,
-                    'sniper_trigger': dynamic_pct,
+                    'sniper_trigger': float(dynamic_pct), # Ensure it's passed as float to viewer
                     'secret_quarter_target': secret_quarter_target,
                     'day_high': day_high,
                     'day_low': day_low,

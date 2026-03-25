@@ -11,8 +11,8 @@ import math
 import yfinance as yf
 import pytz
 import tempfile
-import pandas as pd   # 🔥 V20 추가: 동적 타점 계산용
-import numpy as np    # 🔥 V20 추가: 동적 타점 계산용
+import pandas as pd   
+import numpy as np    
 
 class KoreaInvestmentBroker:
     def __init__(self, app_key, app_secret, cano, acnt_prdt_cd="01"):
@@ -250,10 +250,28 @@ class KoreaInvestmentBroker:
         return 0.0
 
     def get_previous_close(self, ticker):
-        try: return float(yf.Ticker(ticker).fast_info['previous_close'])
+        # 🔥 [V21.4 핵심 패치 1] 정규장 종가 ➡️ 전일 애프터마켓 최종 종가로 기준점 교체
+        try:
+            df = yf.download(ticker, period="5d", interval="1m", prepost=True, progress=False)
+            if not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.droplevel(1)
+                df.index = df.index.tz_convert('America/New_York')
+                
+                now_est = datetime.datetime.now(pytz.timezone('America/New_York'))
+                # 오늘 새벽 04:00 (프리마켓 시작점) 이전의 데이터만 필터링
+                today_pre_start = now_est.replace(hour=4, minute=0, second=0, microsecond=0)
+                if now_est.hour < 4:
+                    today_pre_start -= datetime.timedelta(days=1)
+                
+                past_df = df[df.index < today_pre_start]
+                if not past_df.empty:
+                    # 마지막으로 거래된 가격(애프터마켓 종가)을 반환
+                    return float(past_df['Close'].iloc[-1])
         except Exception as e:
-            print(f"⚠️ [야후 파이낸스] 전일종가 에러, 한투 API 우회 가동: {e}")
+            print(f"⚠️ [야후 파이낸스] 전일 애프터마켓 종가 에러, 한투 API 우회 가동: {e}")
 
+        # Fallback
         try:
             excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
@@ -508,6 +526,7 @@ class KoreaInvestmentBroker:
         return 0.0, ""
 
     def get_dynamic_sniper_target(self, index_ticker, weight=1.0):
+        # 🔥 [V21.4 핵심 패치 2] 3단 동적 엔진 (애프터마켓 기준 + 갭 자동 변속 + 상한가 Cap)
         try:
             df = yf.download(index_ticker, period='1mo', interval='5m', prepost=True, progress=False)
             if df.empty: 
@@ -517,16 +536,28 @@ class KoreaInvestmentBroker:
                 df.columns = df.columns.droplevel(1)
                 
             df.index = df.index.tz_convert('America/New_York')
-            df = df.between_time('04:00', '16:00')
+            
+            # 🔥 V21.7 핫픽스: 노이즈 분리 (고/저가는 정규장, 종가는 애프터마켓)
+            df_full = df.between_time('04:00', '19:59')
+            df_reg = df.between_time('09:30', '16:00')
             
             daily_data = []
-            for date, group in df.groupby(df.index.date):
+            for date, group in df_full.groupby(df_full.index.date):
                 if group.empty: continue
+                
+                reg_group = df_reg[df_reg.index.date == date]
+                if not reg_group.empty:
+                    high_val = reg_group['High'].max()
+                    low_val = reg_group['Low'].min()
+                else:
+                    high_val = group['High'].max()
+                    low_val = group['Low'].min()
+                    
                 daily_data.append({
                     'Date': pd.to_datetime(date),
-                    'High': group['High'].max(),
-                    'Low': group['Low'].min(),
-                    'Close': group['Close'].iloc[-1]
+                    'High': high_val,
+                    'Low': low_val,
+                    'Close': group['Close'].iloc[-1] # 애프터마켓 최종 종가
                 })
             daily_df = pd.DataFrame(daily_data).set_index('Date')
             
@@ -534,35 +565,61 @@ class KoreaInvestmentBroker:
             now_est = datetime.datetime.now(est)
             today_date = now_est.date()
             
-            if now_est.hour < 16:
-                daily_df = daily_df[daily_df.index.date < today_date]
-            else:
-                daily_df = daily_df[daily_df.index.date <= today_date]
-                
             if len(daily_df) < 15: 
                 return None 
+            
+            # 1단계: '어제'까지의 데이터로 순수 변동성(ATR) 계산
+            past_df = daily_df[daily_df.index.date < today_date]
+            if past_df.empty or len(past_df) < 15:
+                # Fallback 로직
+                last_atr_5 = 0
+                last_atr_14 = 0
+                last_close_past = daily_df['Close'].iloc[-2] if len(daily_df) > 1 else daily_df['Close'].iloc[-1]
+            else:
+                past_tr = pd.concat([
+                    past_df['High'] - past_df['Low'],
+                    abs(past_df['High'] - past_df['Close'].shift(1)),
+                    abs(past_df['Low'] - past_df['Close'].shift(1))
+                ], axis=1).max(axis=1)
                 
-            prev_c = daily_df['Close'].shift(1)
-            tr = pd.concat([
-                daily_df['High'] - daily_df['Low'],
-                abs(daily_df['High'] - prev_c),
-                abs(daily_df['Low'] - prev_c)
-            ], axis=1).max(axis=1)
+                last_atr_5 = past_tr.rolling(5).mean().iloc[-1]
+                last_atr_14 = past_tr.rolling(14).mean().iloc[-1]
+                last_close_past = past_df['Close'].iloc[-1] # 전일 애프터마켓 최종 종가
             
-            atr_5d = tr.rolling(window=5).mean()
-            atr_14d = tr.rolling(window=14).mean()
+            # 2단계: 프리마켓 갭(Gap) 측정
+            today_df = daily_df[daily_df.index.date == today_date]
+            gap_pct = 0.0
+            is_panic = False
             
-            last_atr_5 = atr_5d.iloc[-1]
-            last_atr_14 = atr_14d.iloc[-1]
-            last_close = daily_df['Close'].iloc[-1]
+            if not today_df.empty and last_close_past > 0:
+                current_price = today_df['Close'].iloc[-1]
+                gap_pct = ((current_price - last_close_past) / last_close_past) * 100
+                
+                # 인덱스 -1.0% 하락 = 3배수 레버리지(SOXL) 약 -3.0% 하락 (패닉장 기준)
+                if gap_pct <= -1.0:
+                    is_panic = True
             
-            exp_5d = (last_atr_5 / last_close) * 100 * 3
-            exp_14d = (last_atr_14 / last_close) * 100 * 3
+            # 3배수 퍼센트 변환
+            exp_5d = (last_atr_5 / last_close_past) * 100 * 3 if last_close_past > 0 else 0
+            exp_14d = (last_atr_14 / last_close_past) * 100 * 3 if last_close_past > 0 else 0
             
             hybrid = max(exp_5d, exp_14d * 0.8)
-            final_target = hybrid * weight
             
-            return round(final_target, 2)
+            # 3단계: 자동 기어 변속
+            if is_panic:
+                final_target = hybrid * 1.0
+            else:
+                final_target = hybrid * weight
+                final_target = min(final_target, 10.0) 
+            
+            class TargetFloat(float):
+                pass
+            
+            ret = TargetFloat(round(final_target, 2))
+            ret.is_panic = is_panic
+            ret.gap_pct = round(gap_pct * 3, 2) 
+            
+            return ret
             
         except Exception as e:
             print(f"⚠️ [Broker] 동적 스나이퍼 타점 계산 실패 ({index_ticker}): {e}")
