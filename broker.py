@@ -1,7 +1,4 @@
-# ==========================================================
-# [broker.py]
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
+
 import requests
 import json
 import time
@@ -256,10 +253,7 @@ class KoreaInvestmentBroker:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.droplevel(1)
                 df.index = df.index.tz_convert('America/New_York')
-                
                 now_est = datetime.datetime.now(pytz.timezone('America/New_York'))
-                
-                # 🔥 V21.7 핫픽스: 20:00 (애프터마켓 종료) 기준 절대 시간 분리
                 if now_est.time() >= datetime.time(20, 0):
                     last_completed_date = now_est.date()
                 else:
@@ -273,7 +267,6 @@ class KoreaInvestmentBroker:
         except Exception as e:
             print(f"⚠️ [야후 파이낸스] 전일 애프터마켓 종가 에러, 한투 API 우회 가동: {e}")
 
-        # Fallback
         try:
             excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
             params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
@@ -358,8 +351,12 @@ class KoreaInvestmentBroker:
         orders = self.get_unfilled_orders_detail(ticker)
         if not orders: return 0
         
-        target_orders = [o for o in orders if o.get('sll_buy_dvsn_cd') == sll_buy_cd and o.get('ord_dvsn_cd') == target_ord_dvsn]
-        
+        target_orders = []
+        for o in orders:
+            dvsn = o.get('ord_dvsn_cd') or o.get('ord_dvsn') or ''
+            if o.get('sll_buy_dvsn_cd') == sll_buy_cd and dvsn == target_ord_dvsn:
+                target_orders.append(o)
+                
         for o in target_orders:
             self.cancel_order(ticker, o.get('odno'))
             time.sleep(0.3)
@@ -538,7 +535,6 @@ class KoreaInvestmentBroker:
                 
             df.index = df.index.tz_convert('America/New_York')
             
-            # 🔥 V21.7 핫픽스: 노이즈 분리 (고/저가는 정규장, 종가는 애프터마켓)
             df_full = df.between_time('04:00', '19:59')
             df_reg = df.between_time('09:30', '16:00')
             
@@ -558,13 +554,12 @@ class KoreaInvestmentBroker:
                     'Date': pd.to_datetime(date).date(),
                     'High': high_val,
                     'Low': low_val,
-                    'Close': group['Close'].iloc[-1] # 애프터마켓 최종 종가
+                    'Close': group['Close'].iloc[-1] 
                 })
             daily_df = pd.DataFrame(daily_data).set_index('Date')
             
             now_est = datetime.datetime.now(pytz.timezone('America/New_York'))
             
-            # 🔥 V21.7 핫픽스: 20:00 (애프터마켓 종료) 기준 절대 시간 분리
             if now_est.time() >= datetime.time(20, 0):
                 last_completed_date = now_est.date()
                 target_trading_date = now_est.date() + datetime.timedelta(days=1)
@@ -575,10 +570,8 @@ class KoreaInvestmentBroker:
             if len(daily_df) < 15: 
                 return None 
             
-            # 1단계: '어제'까지의 데이터로 순수 변동성(ATR) 계산
             past_df = daily_df[daily_df.index <= last_completed_date]
             if past_df.empty or len(past_df) < 15:
-                # Fallback 로직
                 last_atr_5 = 0
                 last_atr_14 = 0
                 last_close_past = daily_df['Close'].iloc[-2] if len(daily_df) > 1 else daily_df['Close'].iloc[-1]
@@ -591,9 +584,8 @@ class KoreaInvestmentBroker:
                 
                 last_atr_5 = past_tr.rolling(5).mean().iloc[-1]
                 last_atr_14 = past_tr.rolling(14).mean().iloc[-1]
-                last_close_past = past_df['Close'].iloc[-1] # 전일 애프터마켓 최종 종가
+                last_close_past = past_df['Close'].iloc[-1] 
             
-            # 2단계: 프리마켓 갭(Gap) 측정
             today_df = daily_df[daily_df.index == target_trading_date]
             gap_pct = 0.0
             is_panic = False
@@ -602,17 +594,14 @@ class KoreaInvestmentBroker:
                 current_price = today_df['Close'].iloc[-1]
                 gap_pct = ((current_price - last_close_past) / last_close_past) * 100
                 
-                # 인덱스 -1.0% 하락 = 3배수 레버리지(SOXL) 약 -3.0% 하락 (패닉장 기준)
                 if gap_pct <= -1.0:
                     is_panic = True
             
-            # 3배수 퍼센트 변환
             exp_5d = (last_atr_5 / last_close_past) * 100 * 3 if last_close_past > 0 else 0
             exp_14d = (last_atr_14 / last_close_past) * 100 * 3 if last_close_past > 0 else 0
             
             hybrid = max(exp_5d, exp_14d * 0.8)
             
-            # 3단계: 자동 기어 변속
             if is_panic:
                 final_target = hybrid * 1.0
             else:
@@ -647,8 +636,8 @@ class KoreaInvestmentBroker:
 
         try:
             excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
-            params = {"AUTH": "", "EXCD": excg_cd, "SYMB": params} # 오타방지
-            res = self._call_api("HHDFS76200200", "/uapi/overseas-price/v1/quotations/price", "GET", params={"AUTH": "", "EXCD": excg_cd, "SYMB": ticker})
+            params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker} 
+            res = self._call_api("HHDFS76200200", "/uapi/overseas-price/v1/quotations/price", "GET", params=params)
             if res.get('rt_cd') == '0':
                 out = res.get('output', {})
                 return float(out.get('high', 0.0)), float(out.get('low', 0.0))

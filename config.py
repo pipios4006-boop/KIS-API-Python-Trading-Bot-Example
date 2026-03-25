@@ -300,8 +300,14 @@ class ConfigManager:
             today_est_str = now_est.strftime('%Y-%m-%d')
             
             if state.get("last_update_date") != today_est_str:
-                nyse = mcal.get_calendar('NYSE')
-                is_trading_day = not nyse.schedule(start_date=now_est.date(), end_date=now_est.date()).empty
+                is_trading_day = False
+                try:
+                    nyse = mcal.get_calendar('NYSE')
+                    schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
+                    is_trading_day = not schedule.empty
+                except Exception as e:
+                    print(f"⚠️ [Config] 달력 라이브러리 에러 발생. 평일 강제 개장 처리합니다: {e}")
+                    is_trading_day = now_est.weekday() < 5
                 
                 if is_trading_day:
                     new_day = state.get("day_count", 0) + 1
