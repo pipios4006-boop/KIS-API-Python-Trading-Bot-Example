@@ -319,6 +319,7 @@ async def scheduled_sniper_monitor(context):
     chat_id = context.job.chat_id
     
     target_cache = app_data.setdefault('dynamic_targets', {})
+    # 캐시 만료 조건 완화 (매일 변경 시에만)
     today_est_str = now_est.strftime('%Y%m%d')
     if target_cache.get('date') != today_est_str:
         target_cache.clear()
@@ -350,12 +351,25 @@ async def scheduled_sniper_monitor(context):
                 if curr_p <= 0: continue
                 
                 idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
-                if t not in target_cache:
-                    weight = cfg.get_sniper_multiplier(t)
-                    tgt = await asyncio.to_thread(broker.get_dynamic_sniper_target, idx_ticker, weight)
-                    target_cache[t] = tgt if tgt is not None else (9.0 if t=="SOXL" else 5.0) 
+                
+                # 💡 [핵심 패치] 비중(weight)이 실시간으로 변경되었을 경우 캐시를 강제로 갱신하여 인지 부조화 방지!
+                current_weight = cfg.get_sniper_multiplier(t)
+                cached_data = target_cache.get(t)
+                
+                if cached_data is None or cached_data.get('weight') != current_weight:
+                    tgt = await asyncio.to_thread(broker.get_dynamic_sniper_target, idx_ticker, current_weight)
+                    if tgt is not None:
+                        target_cache[t] = {
+                            'value': tgt,
+                            'weight': current_weight
+                        }
+                    else:
+                        target_cache[t] = {
+                            'value': (9.0 if t=="SOXL" else 5.0),
+                            'weight': current_weight
+                        }
 
-                sniper_pct = target_cache[t]
+                sniper_pct = target_cache[t]['value']
                 raw_target_price = prev_c * (1 - (sniper_pct / 100.0))
                 target_buy_price = math.floor(raw_target_price * 100) / 100.0
                 

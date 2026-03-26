@@ -170,6 +170,7 @@ class TelegramController:
                     today_str = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
                     alert_key = f"{t}_{today_str}"
                     if alert_key not in self.panic_alerts:
+                        # 💡 텍스트 교정 완료: 호들갑을 떨지 않고 듬직하게 팩트만 전달합니다!
                         alert_msg = f"🚨 <b>[긴급] {t} 패닉 갭 하락 감지! ({gap_pct}%)</b>\n폭락 방어막 가동! V17 스나이퍼가 정밀 가중치(10% Cap)를 적용하여 <b>-{dynamic_pct}%</b> 타점으로 자동 투입되었습니다!"
                         await update.message.reply_text(alert_msg, parse_mode='HTML')
                         self.panic_alerts[alert_key] = True
@@ -462,7 +463,7 @@ class TelegramController:
             split = self.cfg.get_split_count(ticker)
             t_val, _ = self.cfg.get_absolute_t_val(ticker, actual_qty, actual_avg)
             
-            report += f"📊 <b>[ 현재 진행 상황 요약 ]</b>\n"
+            report += f"📊 <b>[ 현재 진행 상황 요 요약 ]</b>\n"
             report += f"▪️ 현재 T값 : {t_val:.4f} T ({int(split)}분할)\n"
             report += f"▪️ 보유 수량 : {actual_qty} 주 (평단 ${actual_avg:,.2f})\n"
             report += f"▪️ 총 매수액 : ${total_buy:,.2f}\n"
