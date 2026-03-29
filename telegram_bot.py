@@ -187,10 +187,10 @@ class TelegramController:
                 
                 if ver == "V17" and actual_qty > 0:
                     if is_rev:
-                        secret_quarter_target = math.ceil(actual_avg * 1.0025 * 100) / 100.0
+                        secret_quarter_target = math.ceil(actual_avg * 1.005 * 100) / 100.0
                     else:
                         is_first_half = t_val < (split / 2)
-                        secret_quarter_target = plan.get('star_price', 0.0) if is_first_half else math.ceil(actual_avg * 1.0025 * 100) / 100.0
+                        secret_quarter_target = plan.get('star_price', 0.0) if is_first_half else math.ceil(actual_avg * 1.005 * 100) / 100.0
 
                 # 💡 [V22.05 개조] 뷰 엔진으로 V3.0 동적 변동성 객체 파라미터 직접 전달
                 ticker_data_list.append({

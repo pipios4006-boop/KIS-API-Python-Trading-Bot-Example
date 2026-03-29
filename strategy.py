@@ -103,8 +103,12 @@ class InfiniteStrategy:
         star_ratio = target_ratio - (target_ratio * depreciation_factor * t_val)
         
         if is_reverse:
-            if ma_5day > 0: star_price = round(ma_5day, 2)
-            else: star_price = round(avg_price, 2)
+            safe_floor_price = math.ceil(avg_price * 1.005 * 100) / 100.0
+            
+            if ma_5day > 0: 
+                star_price = max(round(ma_5day, 2), safe_floor_price)
+            else: 
+                star_price = safe_floor_price
 
             # 💡 [V22.02 수술] 제논의 역설을 깬 극한의 자금 조달 (Fixed Escrow Blood)
             # 리버스 기간 동안 확보된 총 매도(수혈) 금액을 역산하여, 절대 줄어들지 않는 고정 4분할 1회분을 산출합니다.
