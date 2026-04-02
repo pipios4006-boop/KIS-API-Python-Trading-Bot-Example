@@ -334,6 +334,36 @@ class TelegramController:
                     self.cfg.set_last_split_date(ticker, split_date)
                     split_type = "액면분할" if split_ratio > 1.0 else "액면병합(역분할)"
                     await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
+                
+                # ==========================================================
+                # 💡 [핵심 수술] 단가 소급 업데이트 (Retrospective Unit Price Update) 
+                # ==========================================================
+                kst = pytz.timezone('Asia/Seoul')
+                now_kst = datetime.datetime.now(kst)
+                
+                est = pytz.timezone('US/Eastern')
+                now_est = datetime.datetime.now(est)
+                nyse = mcal.get_calendar('NYSE')
+                schedule = nyse.schedule(start_date=(now_est - datetime.timedelta(days=10)).date(), end_date=now_est.date())
+                
+                if not schedule.empty:
+                    last_trade_date = schedule.index[-1]
+                    target_kis_str = last_trade_date.strftime('%Y%m%d')
+                    target_ledger_str = last_trade_date.strftime('%Y-%m-%d')
+                else:
+                    target_kis_str = now_kst.strftime('%Y%m%d')
+                    target_ledger_str = now_kst.strftime('%Y-%m-%d')
+
+                # 1. KIS API 전일 체결 영수증 스캔
+                target_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, target_kis_str, target_kis_str)
+                
+                # 2. 장부(Ledger) 단가 핀셋 교정 위임 (config.py로 패스)
+                if target_execs:
+                    calibrated_count = self.cfg.calibrate_ledger_prices(ticker, target_ledger_str, target_execs)
+                    if calibrated_count > 0:
+                        logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
+
+                # ==========================================================
                     
                 _, holdings = self.broker.get_account_balance()
                 if holdings is None:
@@ -384,25 +414,8 @@ class TelegramController:
                     self.cfg.calibrate_avg_price(ticker, actual_avg)
                     await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
                 elif diff != 0:
-                    kst = pytz.timezone('Asia/Seoul')
-                    now_kst = datetime.datetime.now(kst)
-
-                    est = pytz.timezone('US/Eastern')
-                    now_est = datetime.datetime.now(est)
-                    nyse = mcal.get_calendar('NYSE')
-                    
-                    schedule = nyse.schedule(start_date=(now_est - datetime.timedelta(days=10)).date(), end_date=now_est.date())
-                    
-                    if not schedule.empty:
-                        last_trade_date = schedule.index[-1]
-                        target_kis_str = last_trade_date.strftime('%Y%m%d')
-                        target_ledger_str = last_trade_date.strftime('%Y-%m-%d')
-                    else:
-                        target_kis_str = now_kst.strftime('%Y%m%d')
-                        target_ledger_str = now_kst.strftime('%Y-%m-%d')
-
-                    target_execs = self.broker.get_execution_history(ticker, target_kis_str, target_kis_str)
-                    
+                    # (중략된 기존 TrueSync 오차 교정(CALIB) 로직 - V20.4 버전)
+                    # 위에서 이미 날짜(target_kis_str) 연산을 수행했으므로 재활용
                     temp_recs = [r for r in recs if r['date'] != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
                     temp_qty, temp_avg, _, _ = self.cfg.calculate_holdings(ticker, temp_recs)
                     
@@ -453,7 +466,6 @@ class TelegramController:
 
                 self._sync_escrow_cash(ticker)
                 return "SUCCESS"
-
     async def _display_ledger(self, ticker, chat_id, context, query=None, message_obj=None, pre_fetched_holdings=None):
         recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
         
