@@ -190,7 +190,6 @@ class TelegramView:
                 body_msg += f"💡 <b>원인 역산 추정:</b> 수동 매수로 수량이 급증했거나, '/seed' 시드머니 설정이 대폭 축소되었습니다.\n"
                 body_msg += f"🛡️ <b>가동 조치:</b> 마이너스 호가 차단용 절대 하한선($0.01) 방어막 가동 중!\n\n"
 
-            # 💡 [V23 롤백] 오리지널 VWAP 독립 모드 표출 (하이브리드 병합 철거)
             if v_mode == "V17":
                 v_mode_display = "V17 시크릿"
                 main_icon = "🦇"
@@ -270,7 +269,6 @@ class TelegramView:
                     trigger_price = tracking_info.get('trigger_price', 0.0)
                     body_msg += f"🎯 상방 추적(${trigger_price:.2f}) 중 (고가: ${peak_price:.2f})\n"
                 else:
-                    # 💡 [핵심 수술] 리버스 모드 시 안전마진(safe_floor)을 배제하고 순수 star_price(5MA)만 사용하도록 격리
                     if is_rev:
                         sn_target = t_info['star_price']
                     else:
@@ -334,6 +332,9 @@ class TelegramView:
             elif v_mode == "V_VWAP":
                 body_msg += f"⏱️ <b>페일세이프(Fail-Safe):</b> 정규장 17:05 KST 무매 덫 선제 장전\n"
                 body_msg += f"⏱️ <b>VWAP 스케줄:</b> 15:30 EST 기존 LOC 철거 ➔ 지정가 분할 타격\n"
+# ==========================================================
+# [telegram_view.py] - Part 2 (이어서 작성)
+# ==========================================================
 
             body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
             
@@ -393,6 +394,17 @@ class TelegramView:
                 p_msg += "<i>※ P-VWAP 주문은 15:30 EST부터 1분 단위로 분할 타격되며 미체결분은 장 마감 시 자동 소멸됩니다. (봇의 무매 예산 연동 없음)</i>\n\n"
                 final_msg += p_msg
 
+        # ==========================================================
+        # 💡 [핵심 수술] 1-Tier 자율주행 지표 1줄 요약 조립 및 하단 강제 노출
+        # ==========================================================
+        vol_summaries = []
+        for t_info in ticker_data:
+            if 'vol_weight' in t_info and 'vol_status' in t_info:
+                vol_summaries.append(f"{t_info['ticker']}: {t_info['vol_weight']} ({t_info['vol_status']})")
+        
+        if vol_summaries:
+            final_msg += "📊 <b>[자율지표]</b> " + " | ".join(vol_summaries) + "\n<i>(상세: /mode)</i>\n\n"
+
         if not is_trade_active: final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
@@ -406,7 +418,6 @@ class TelegramView:
         for t in active_tickers:
             ver = config.get_version(t)
             
-            # 💡 [V23 롤백] 오리지널 VWAP 독립 모드 표출
             if ver == "V17":
                 icon = "🦇"
                 ver_display = "V17 시크릿"
@@ -596,4 +607,3 @@ class TelegramView:
             [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
-

@@ -3,6 +3,9 @@
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # ==========================================================
 import math
+import os
+import json
+import tempfile
 from datetime import datetime, timedelta
 
 class InfiniteStrategy:
@@ -11,6 +14,30 @@ class InfiniteStrategy:
 
     def _ceil(self, val): return math.ceil(val * 100) / 100.0
     def _floor(self, val): return math.floor(val * 100) / 100.0
+
+    def _mark_quarter_sell_completed(self, ticker):
+        flag_file = f"cache_sniper_sell_{ticker}.json"
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        if os.path.exists(flag_file):
+            try:
+                with open(flag_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str and data.get("QUARTER_SELL_COMPLETED"):
+                        return
+            except Exception:
+                pass
+
+        data = {"date": today_str, "QUARTER_SELL_COMPLETED": True}
+        try:
+            fd, temp_path = tempfile.mkstemp(dir=".")
+            with os.fdopen(fd, 'w') as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, flag_file)
+        except Exception:
+            pass
 
     def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False):
         core_orders = []
@@ -22,6 +49,10 @@ class InfiniteStrategy:
         # 스나이퍼 잠금 상태 실시간 확인
         lock_s_sell = self.cfg.check_lock(ticker, "SNIPER_SELL")
         lock_s_buy = self.cfg.check_lock(ticker, "SNIPER_BUY")
+
+        # 🛡️ VWAP 락다운을 위한 스나이퍼 익절 팩트 로컬 캐시 원자적 각인
+        if lock_s_sell and not is_simulation:
+            self._mark_quarter_sell_completed(ticker)
         
         # ==========================================================
         # 🛡️ [V18.13 패치] KIS 자전거래(Wash-Trade) 원천 차단 방어벽 엔진

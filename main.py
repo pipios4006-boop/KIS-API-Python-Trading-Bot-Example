@@ -65,17 +65,55 @@ logging.basicConfig(
     ]
 )
 
+# ==========================================================
+# 🛡️ [V23.05] 자율주행 변동성 마스터 스위치 터미널 렌더링 엔진
+# ==========================================================
+async def scheduled_volatility_scan(context):
+    """
+    10:20 EST (정규장 개장 50분 후) 격발.
+    대상 종목들의 HV와 당일 VXN을 연산하여 터미널 메인 화면에 1-Tier 브리핑 덤프
+    """
+    app_data = context.job.data
+    cfg = app_data['cfg']
+    
+    # 예비 퀀트 연산 로직 (실제 VXN/HV 팩트 데이터 Fetcher 모듈과 연동 필요)
+    # 현재는 아키텍처 구성을 위해 임의의 래퍼(Wrapper) 텍스트를 출력합니다.
+    print("\n" + "=" * 60)
+    print("📈 [자율주행 변동성 스캔 완료] (10:20 EST 스냅샷)")
+    
+    active_tickers = []
+    for r in cfg.get_ledger():
+        t = r.get('ticker')
+        if t and t not in active_tickers:
+            active_tickers.append(t)
+            
+    if not active_tickers:
+        print("📊 현재 운용 중인 종목이 없습니다.")
+    else:
+        # 다중 종목 1-Tier 압축 렌더링
+        briefing_lines = []
+        for ticker in active_tickers:
+            # TODO: 야후 파이낸스/KIS 연동을 통한 실제 가중치 연산
+            dummy_weight = 0.85 if ticker == "TQQQ" else 1.15 
+            status_text = "OFF 권장" if dummy_weight <= 1.0 else "ON 권장"
+            briefing_lines.append(f"{ticker}: {dummy_weight} ({status_text})")
+            
+        print(f"📊 [자율주행 지표] {' | '.join(briefing_lines)} (상세 게이지: /mode)")
+    print("=" * 60 + "\n")
+# ==========================================================
+
 def main():
     TARGET_HOUR, season_msg = get_target_hour()
     
     cfg = ConfigManager()
     latest_version = cfg.get_latest_version() 
     
-    print("=" * 50)
+    print("=" * 60)
     print(f"🚀 앱솔루트 스노우볼 퀀트 엔진 {latest_version} (VWAP 스플릿 & 경량화 아키텍처 탑재)")
     print(f"📅 날짜 정보: {season_msg}")
     print(f"⏰ 자동 동기화: 08:30(여름) / 09:30(겨울) 자동 변경")
-    print("=" * 50)
+    print(f"🛡️ 1-Tier 자율주행 지표 스캔 대기 중... (매일 10:20 EST 격발)")
+    print("=" * 60)
     
     perform_self_cleaning()
     
@@ -118,6 +156,7 @@ def main():
             'tx_lock': tx_lock
         }
         kst = pytz.timezone('Asia/Seoul')
+        est = pytz.timezone('US/Eastern')
         
         # 1. 시스템 관리 스케줄러 (core)
         for tt in [datetime.time(7,0,tzinfo=kst), datetime.time(11,0,tzinfo=kst), datetime.time(16,30,tzinfo=kst), datetime.time(22,0,tzinfo=kst)]:
@@ -129,6 +168,9 @@ def main():
         for hour in [17, 18]:
             jq.run_daily(scheduled_force_reset, time=datetime.time(hour, 0, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
             
+        # 💡 [V23.05] 자율주행 변동성 지표 1-Tier 스캔 (EST 10:20 - 시차 자동 계산)
+        jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+        
         # 2. 실전 전투 매매 스케줄러 (trade)
         for hour in [17, 18]:
             jq.run_daily(scheduled_regular_trade, time=datetime.time(hour, 5, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)

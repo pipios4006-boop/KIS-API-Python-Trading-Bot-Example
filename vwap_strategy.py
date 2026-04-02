@@ -3,6 +3,8 @@
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # ==========================================================
 import math
+import os
+import json
 import pytz
 from datetime import datetime
 
@@ -40,6 +42,21 @@ class VwapStrategy:
             0.110, 0.120, 0.131, 0.143, 0.160
         ]
 
+    def _check_sniper_sell_lockdown(self, ticker):
+        """스나이퍼 1/4 쿼터 매도 당일 성공 여부를 원자적 캐시에서 확인하여 제논의 역설(다중 매도) 방어"""
+        flag_file = f"cache_sniper_sell_{ticker}.json"
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        if os.path.exists(flag_file):
+            try:
+                with open(flag_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str and data.get("QUARTER_SELL_COMPLETED"):
+                        return True
+            except Exception:
+                pass
+        return False
+
     def _get_vol_profile(self, ticker):
         """종목별 가중치를 가져오고 합이 1.0이 되도록 정규화(Normalization)"""
         raw_profile = self.raw_profiles.get(ticker, self.default_profile)
@@ -66,6 +83,15 @@ class VwapStrategy:
             return {
                 "orders": [], 
                 "process_status": "⏳VWAP대기/종료", 
+                "allocated_qty": 0,
+                "bin_weight": 0.0
+            }
+
+        # 🛡️ 2차/3차 방어막: 당일 상방 스나이퍼 격발 이력이 존재할 경우 VWAP 매도 엔진 락다운 처리
+        if side == "SELL" and self._check_sniper_sell_lockdown(ticker):
+            return {
+                "orders": [], 
+                "process_status": "⛔VWAP매도락다운(스나이퍼명중)", 
                 "allocated_qty": 0,
                 "bin_weight": 0.0
             }
