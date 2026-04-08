@@ -1,7 +1,8 @@
 # ==========================================================
-# [main.py]
+# [main.py] - Part 1/2 부 (상반부)
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# 💡 [V24.06] 애프터마켓 3% 로터리 덫 (16:05 EST) 스케줄러 이식 완료
+# 💡 [V24.10] 텔레그램 API 통신 타임아웃(TimedOut) 방어 및 커넥션 풀 최적화 이식 완료
+# 💡 [V24.11 수술] VolatilityEngine 동적 연결 및 TelegramController 의존성 주입
 # ==========================================================
 
 import os
@@ -21,6 +22,7 @@ from telegram_bot import TelegramController
 # 💡 [V_REV 신규 역추세 엔진 의존성 주입]
 from queue_ledger import QueueLedger
 from strategy_reversion import ReversionStrategy
+from volatility_engine import VolatilityEngine  # 💡 [핵심 수술] 하드코딩 제거를 위한 변동성 엔진 임포트
 
 # 💡 [핵심 수술] 분할된 2개의 스케줄러 파일에서 각각 역할에 맞게 함수를 임포트
 from scheduler_core import (
@@ -38,7 +40,7 @@ from scheduler_trade import (
     scheduled_vwap_trade,
     scheduled_vwap_init_and_cancel,  
     scheduled_emergency_liquidation,
-    scheduled_after_market_lottery  # 💡 [핵심 수술] 애프터마켓 로터리 덫 임포트
+    scheduled_after_market_lottery  
 )
 
 if not os.path.exists('data'):
@@ -97,15 +99,23 @@ async def scheduled_volatility_scan(context):
         print("📊 현재 운용 중인 종목이 없습니다.")
     else:
         briefing_lines = []
+        vol_engine = VolatilityEngine()  # 💡 [핵심 수술] 자율주행 엔진 인스턴스화
+        
         for ticker in active_tickers:
-            dummy_weight = 0.85 if ticker == "TQQQ" else 1.15 
-            status_text = "OFF 권장" if dummy_weight <= 1.0 else "ON 권장"
-            briefing_lines.append(f"{ticker}: {dummy_weight} ({status_text})")
+            try:
+                # 💡 [핵심 수술] 기존 하드코딩(0.85/1.15)을 완벽히 도려내고 실시간 변동성 지표 동적 스캔
+                weight_data = await asyncio.to_thread(vol_engine.calculate_weight, ticker)
+                real_weight = float(weight_data.get('weight', 1.0) if isinstance(weight_data, dict) else weight_data)
+            except Exception as e:
+                logging.warning(f"[{ticker}] 변동성 지표 산출 실패. 폴백(Fallback) 안전마진 적용: {e}")
+                real_weight = 0.85 if ticker == "TQQQ" else 1.15 
+                
+            status_text = "OFF 권장" if real_weight <= 1.0 else "ON 권장"
+            briefing_lines.append(f"{ticker}: {real_weight:.2f} ({status_text})")
             
         print(f"📊 [자율주행 지표] {' | '.join(briefing_lines)} (상세 게이지: /mode)")
     print("=" * 60 + "\n")
 # ==========================================================
-
 def main():
     TARGET_HOUR, season_msg = get_target_hour()
     
@@ -132,9 +142,30 @@ def main():
     strategy_rev = ReversionStrategy()
     
     tx_lock = asyncio.Lock()
-    bot = TelegramController(cfg, broker, strategy, tx_lock)
     
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # 💡 [핵심 수술] TelegramController에 V-REV 필수 모듈(queue_ledger, strategy_rev) 완벽 주입
+    # (주의: telegram_bot.py 의 __init__ 인자 순서에 맞춰 kwargs로 안전하게 주입합니다)
+    bot = TelegramController(
+        cfg, 
+        broker, 
+        strategy, 
+        tx_lock, 
+        vwap_strategy=vwap_strategy, 
+        queue_ledger=queue_ledger, 
+        strategy_rev=strategy_rev
+    )
+    
+    # 💡 [핵심 수술] 텔레그램 네트워크 지연(Timeout) 방어 및 커넥션 풀 확장
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .connect_timeout(30.0)
+        .pool_timeout(30.0)
+        .connection_pool_size(512)
+        .build()
+    )
     
     for cmd, handler in [
         ("start", bot.cmd_start), 

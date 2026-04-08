@@ -1,8 +1,9 @@
 # ==========================================================
-# [telegram_bot.py] (1부 / 2부) - 🌟 100% 통합 완성본 🌟
+# [telegram_bot.py] - Part 1/2 부 (상반부)
 # ⚠️ 수술 내역: 
 # 1. /reset 시 삼위일체(본장부, 에스크로, 백업장부, 큐장부) 100% 소각 엔진 탑재
 # 2. 0주 도달 시 마이너스 수익이라도 장부를 비우는(강제 손절 리셋) 로직 개방
+# 💡 [핵심 수술] __init__ 확장을 통한 V-REV 및 VWAP 의존성 주입(DI) 연결 완비
 # ==========================================================
 import logging
 import datetime
@@ -18,7 +19,8 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, Mes
 from telegram_view import TelegramView 
 
 class TelegramController:
-    def __init__(self, config, broker, strategy, tx_lock=None):
+    # 💡 [핵심 수술] main.py로부터 신규 엔진(vwap_strategy, queue_ledger, strategy_rev)을 주입받도록 파라미터 확장
+    def __init__(self, config, broker, strategy, tx_lock=None, vwap_strategy=None, queue_ledger=None, strategy_rev=None):
         self.cfg = config
         self.broker = broker
         self.strategy = strategy
@@ -28,7 +30,10 @@ class TelegramController:
         self.sync_locks = {} 
         self.tx_lock = tx_lock or asyncio.Lock()
         
-        self.queue_ledger = None 
+        # 💡 [핵심 수술] 주입받은 의존성 객체를 컨트롤러 메모리에 완벽히 바인딩
+        self.vwap_strategy = vwap_strategy
+        self.queue_ledger = queue_ledger
+        self.strategy_rev = strategy_rev 
 
     def _is_admin(self, update: Update):
         if self.admin_id is None:
@@ -269,7 +274,6 @@ class TelegramController:
         for t in self.cfg.get_active_tickers():
             self.cfg.set_version(t, "V14")
         await update.message.reply_text("✅ <b>모든 종목이 오리지널 V4(무매4) 모드로 복귀했습니다.</b>", parse_mode='HTML')
-
     async def cmd_sync(self, update, context):
         if not self._is_admin(update): return
         await update.message.reply_text("🔄 시장 분석 및 지시서 작성 중...")
@@ -501,7 +505,7 @@ class TelegramController:
                     self.cfg.apply_stock_split(ticker, split_ratio)
                     self.cfg.set_last_split_date(ticker, split_date)
                     split_type = "액면분할" if split_ratio > 1.0 else "액면병합(역분할)"
-                    await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
+                    await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
                 
                 kst = pytz.timezone('Asia/Seoul')
                 now_kst = datetime.datetime.now(kst)
@@ -561,7 +565,6 @@ class TelegramController:
                 diff = actual_qty - ledger_qty
                 price_diff = abs(actual_avg - avg_price)
 
-                # 💡 [수술 2단계: 0주 도달 시 강제 손절/리셋 개방 (마이너스 수익 허용)]
                 if actual_qty == 0:
                     if ledger_qty > 0:
                         kst = pytz.timezone('Asia/Seoul')
@@ -569,8 +572,6 @@ class TelegramController:
                         prev_c = await asyncio.to_thread(self.broker.get_previous_close, ticker)
                         
                         try:
-                            # 💡 기존의 '수익금 검증'이 포함된 archive_graduation이 거부할 경우를 대비하여 
-                            # 강제 아카이빙(손절 리셋) 로직으로 분기 처리함
                             new_hist, added_seed = self.cfg.archive_graduation(ticker, today_str, prev_c)
                             
                             if new_hist:
@@ -588,12 +589,10 @@ class TelegramController:
                                 except Exception as e:
                                     logging.error(f"📸 졸업 이미지 발송 실패: {e}")
                             else:
-                                # 🚨 archive_graduation이 (마이너스 수익 등으로) 아카이빙을 거부했을 경우 강제 장부 비우기 집행
                                 all_recs = [r for r in self.cfg.get_ledger() if r['ticker'] != ticker]
                                 self.cfg._save_json(self.cfg.FILES["LEDGER"], all_recs)
                                 await context.bot.send_message(chat_id, f"⚠️ <b>[{ticker} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
                         except Exception as e:
-                            # 만약 로직 중 에러가 발생해도 무조건 장부는 비워버려서 Deadlock을 탈출함
                             all_recs = [r for r in self.cfg.get_ledger() if r['ticker'] != ticker]
                             self.cfg._save_json(self.cfg.FILES["LEDGER"], all_recs)
                             logging.error(f"강제 졸업 처리 중 에러: {e}")
@@ -657,6 +656,7 @@ class TelegramController:
 
                 self._sync_escrow_cash(ticker)
                 return "SUCCESS"
+
     async def _display_ledger(self, ticker, chat_id, context, query=None, message_obj=None, pre_fetched_holdings=None):
         recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
         
@@ -982,15 +982,12 @@ class TelegramController:
             elif sub == "CONFIRM":
                 ticker = data[2]
                 
-                # 💡 [핵심 수술] 1. 리버스 상태 및 에스크로 소각
                 self.cfg.set_reverse_state(ticker, False, 0)
                 self.cfg.clear_escrow_cash(ticker) 
                 
-                # 💡 [핵심 수술] 2. 본 장부(ledger.json) 소각
                 ledger_data = [r for r in self.cfg.get_ledger() if r.get('ticker') != ticker]
                 self.cfg._save_json(self.cfg.FILES["LEDGER"], ledger_data)
                 
-                # 💡 [핵심 수술] 3. 백업 장부(ledger_backup.json) 소각 (좀비 부활 원천 차단)
                 backup_file = self.cfg.FILES["LEDGER"].replace(".json", "_backup.json")
                 if os.path.exists(backup_file):
                     try:
@@ -1001,7 +998,6 @@ class TelegramController:
                             json.dump(b_data, f, ensure_ascii=False, indent=4)
                     except: pass
                 
-                # 💡 [핵심 수술] 4. V-REV 지층 큐(queue_ledger.json) 소각
                 q_file = "data/queue_ledger.json"
                 if os.path.exists(q_file):
                     try:

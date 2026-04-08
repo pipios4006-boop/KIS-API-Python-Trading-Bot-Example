@@ -1,7 +1,8 @@
 # ==========================================================
-# [volatility_engine.py]
+# [volatility_engine.py] - Part 1/2 부 (상반부)
 # ⚠️ V3.2 패치: 기초지수 1년 ATR 절대 진폭 고정 및 공포지수 방향타 스위치 엔진 탑재
 # 💡 [V24.09 패치] 야후 파이낸스 교착(Deadlock) 방어용 timeout=5 전면 이식 완료
+# 💡 [V24.11 패치] 클래스 래퍼(VolatilityEngine) 구조 도입 및 calculate_weight 공통 인터페이스 신설
 # ==========================================================
 import yfinance as yf
 import pandas as pd
@@ -23,7 +24,6 @@ def _load_cache(key, default_val):
                     return float(val)
         except Exception:
             pass
-    # 최후의 보루(콜드스타트) 2차 방어막 반환
     return default_val
 
 def _save_cache(key, value):
@@ -89,6 +89,11 @@ def _calculate_1y_atr(ticker, cache_key, default_atr):
     except Exception as e:
         print(f"⚠️ [Engine] {ticker} ATR 연산 오류: {e}")
         return _load_cache(cache_key, default_atr)
+# ==========================================================
+# [volatility_engine.py] - Part 2/2 부 (하반부)
+# ⚠️ V3.2 패치: 기초지수 1년 ATR 절대 진폭 고정 및 공포지수 방향타 스위치 엔진 탑재
+# 💡 [V24.11 패치] 클래스 래퍼(VolatilityEngine) 구조 도입 및 calculate_weight 인터페이스 신설
+# ==========================================================
 
 def get_tqqq_target_drop():
     """ [ TQQQ 스나이퍼 ] 실시간 VXN과 QQQ 1년 ATR을 결합하여 타격선 계산 """
@@ -264,3 +269,28 @@ def get_soxl_target_drop_full():
         print(f"❌ SOXX HV 상세 연산 오류: {e}")
         fallback_amp = round(-(2.93 * 3), 2)
         return 0.0, 1.0, fallback_amp, fallback_amp
+
+# ==========================================================
+# 💡 [V24.11 핵심 수술] main.py와 완벽한 통신을 위한 클래스 래퍼 신설
+# ==========================================================
+class VolatilityEngine:
+    def __init__(self):
+        pass
+        
+    def calculate_weight(self, ticker):
+        """ 
+        main.py의 scheduled_volatility_scan 함수가 호출하는 공통 인터페이스.
+        기존 0.85/1.15 하드코딩을 대체하여 팩트 기반의 가중치를 반환합니다.
+        """
+        try:
+            if ticker == "TQQQ":
+                _, weight, _, _ = get_tqqq_target_drop_full()
+                return {'weight': float(weight)}
+            elif ticker == "SOXL":
+                _, weight, _, _ = get_soxl_target_drop_full()
+                return {'weight': float(weight)}
+            else:
+                return {'weight': 1.0}
+        except Exception as e:
+            print(f"⚠️ [VolatilityEngine] {ticker} 가중치 산출 래퍼 오류: {e}")
+            return {'weight': 1.0}
