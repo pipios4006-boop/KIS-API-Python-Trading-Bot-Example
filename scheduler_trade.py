@@ -9,6 +9,7 @@
 # 💡 [V24.15 대수술] V_VWAP 스케줄러 100% 영구 소각 및 2대 코어(V14, V-REV) 최적화
 # 💡 [V24.16 팩트 동기화] 스윕 피니셔 1층 잔량 타점 고유 단가(layer_1_price) 앵커 교정
 # 💡 [V24.17 수술] 긴급 수혈(Emergency MOC) 자동 스케줄러 영구 적출 (수동 격발로 전환)
+# 💡 [V24.18 수술] V-REV 15:45 EST LOC 마감(Cut-off) 타임락(Time-Lock) 방어막 이식
 # ==========================================================
 import os
 import logging
@@ -279,10 +280,12 @@ async def scheduled_vwap_init_and_cancel(context):
         await asyncio.wait_for(_do_init(), timeout=45.0)
     except Exception as e:
         logging.error(f"🚨 Fail-Safe 초기화 에러: {e}")
+
 # ==========================================================
 # [scheduler_trade.py] (2부 / 2부)
 # 💡 [V24.15 대수술] 후반부 스케줄러 최적화 및 V_VWAP 종속성 100% 탈피
 # 💡 [V24.16 팩트 동기화] 스윕 피니셔 1층 잔량 타점 고유 단가(layer_1_price) 앵커 교정
+# 💡 [V24.18 수술] V-REV 15:45 EST LOC 마감(Cut-off) 타임락(Time-Lock) 방어막 이식
 # ==========================================================
 
 # ==========================================================
@@ -449,11 +452,13 @@ async def scheduled_vwap_trade(context):
                         min_idx=min_idx, alloc_cash=rev_daily_budget, q_data=q_data
                     )
                     
-                    if rev_plan.get('trigger_loc'):
+                    # 💡 [V24.18 수술] LOC 규정 마감 시간(15:45 EST) 초과 시 trigger_loc 강제 무시 (Time-Lock)
+                    if rev_plan.get('trigger_loc') and now_est.minute <= 45:
                         vwap_cache[f"REV_{t}_loc_fired"] = True
                         msg = f"🛡️ <b>[{t}] 60% 거래량 지배력 감지 (추세장 전환)</b>\n"
                         msg += f"▫️ 기관급 자금 쏠림으로 인해 위험한 1분 단위 타임 슬라이싱(VWAP)을 전면 중단합니다.\n"
-                        msg += f"▫️ <b>잔여 할당량 전량을 양방향 LOC 방어선으로 전환 배치 완료!</b>"
+                        msg += f"▫️ <b>잔여 할당량 전량을 양방향 LOC 방어선으로 전환 배치 완료!</b>\n"
+                        msg += f"<i>(💡 15:45 EST 규정 마감 전 안전하게 전송되었습니다)</i>"
                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
                         
                         for o in rev_plan.get('orders', []):
@@ -510,8 +515,6 @@ async def scheduled_vwap_trade(context):
                                     
                             await asyncio.sleep(0.2)
 
-                # 💡 [다이어트 완료] 방대한 V_VWAP 전용 블록 100% 소각 완료
-                        
     try:
         await asyncio.wait_for(_do_vwap(), timeout=45.0)
     except Exception as e:
