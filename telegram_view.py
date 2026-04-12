@@ -56,7 +56,7 @@ class TelegramView:
         msg += "▶️ /sync : 📜 통합 지시서 조회\n"
         msg += "▶️ /record : 📊 장부 동기화 및 조회\n"
         msg += "▶️ /history : 🏆 졸업 명예의 전당\n"
-        msg += "▶️ /settlement : ⚙️ 코어스위칭/전술설정\n"
+        msg += "▶️ /settlement : ⚙️ 코어 스위칭 / 전술 설정\n"
         msg += "▶️ /seed : 💵 개별 시드머니 관리\n"
         msg += "▶️ /ticker : 🔄 운용 종목 선택\n"
         msg += "▶️ /mode : 🎯 상방 스나이퍼 ON/OFF\n"
@@ -244,13 +244,13 @@ class TelegramView:
         keyboard.append([InlineKeyboardButton("❌ 닫기", callback_data="RESET:CANCEL")])
         
         return msg, InlineKeyboardMarkup(keyboard)
-
 # ==========================================================
 # [telegram_view.py] - Part 2/2 부 (하반부)
 # ⚠️ 수술 내역: 
 # 1. 1부(상반부)와 100% 결합되도록 들여쓰기 뎁스(4칸) 팩트 정렬
 # 2. 사용자의 원본 2부 코드(동기화 지시서, 결산, 스냅샷, 종목메뉴) 100% 무손실 복원
 # 3. 1부에서 누락되었던 get_ticker_menu 라우터 하단부 통합 완료
+# 🚨 [V25.18 UI 팩트 패치] /settlement V-REV 렌더링 시 무매4 찌꺼기(분할/목표) 소각 및 15% 예산/디커플링 팩트 주입 완료
 # ==========================================================
 
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None):
@@ -465,15 +465,19 @@ class TelegramView:
             comp_rate = config.get_compound_rate(t)
             
             msg += f"{icon} <b>{t} ({ver_display} 모드)</b>\n"
-            msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_pct}%\n▫️ 자동복리: {comp_rate}%\n"
             
+            # MODIFIED: [V25.18 UI 패치] V-REV 렌더링 시 낡은 V14 찌꺼기 철거 및 팩트 기반 디커플링 수치 주입
             if ver == "V_REV":
+                msg += "▫️ 1회 예산: 총 시드의 15% (고정 할당)\n"
+                msg += "▫️ 목표: [1층] 매수단가+0.6%\n"
+                msg += "              [상위층] 평단가+0.5% (디커플링)\n"
+                msg += f"▫️ 자동복리: {comp_rate}%\n"
                 msg += "⚖️ <b>역추세(Reversion) 하이브리드 엔진 스탠바이:</b>\n"
                 msg += "▫️ 전일 종가 앵커 기준 LIFO 큐 교차 매매 대기 중\n\n"
                 row_init = [InlineKeyboardButton(f"🔌 {t} V-REV 큐 장부 초기화 (물량이관)", callback_data=f"SET_INIT:V_REV:{t}")]
                 keyboard.append(row_init)
             else:
-                msg += "\n"
+                msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_pct}%\n▫️ 자동복리: {comp_rate}%\n\n"
                 
             row1 = [
                 InlineKeyboardButton("💎 V14 (무매4)", callback_data=f"SET_VER:V14:{t}"),
