@@ -192,4 +192,5 @@ VERSION_HISTORY = [
     "V26.06 [2026.04.15] 🚨 [런타임 붕괴 완벽 방어 및 Safe Draw 래퍼 이식]: V-REV 0주 스윕 시 장부 소각 직전 진입 평단과 실현 수익을 캡처하는 '메모리 스냅샷' 연결 완료. PIL 비트맵 폰트 강제 폴백 시 anchor 정렬 미지원 에러를 우회하는 수학적 중앙 정렬 래퍼(_safe_draw_text) 전면 적용. (수정: telegram_bot, telegram_view)",
     "V27.00 [2026.04.15] 🚀 [시스템 자가 업데이트(Self-Update) 엔진 탑재]: 깃허브 강제 동기화(git fetch & reset) 및 GCP 데몬(systemctl) 자동 재가동을 통한 무결점 원격 패치 아키텍처 및 2단계 승인 락온 이식 완비 (수정: plugin_updater 신설, telegram_bot, telegram_view, main)",
     "V27.01 [2026.04.16] 🚀 [일일 지시서 스냅샷 엔진 이식]: 정규장(17:05) 확정 타점을 파일에 박제하고 우선 참조하도록 라우팅하여 장중 잔고 변이(0주->1주)에 따른 타점 왜곡 원천 차단 (수정: strategy_reversion, strategy_v14_vwap, scheduler_trade, telegram_bot)"
+    "V27.02 [2026.04.17] 🚨 [자전거래 방어 및 엣지 케이스 수술(푸줄님 제보 반열)]: V14 VWAP 자전거래 차단용 매수 타점 디커플링(-$0.01), LIFO 큐 동일 일자 파편화 자동 병합, 스냅샷 내부 날짜 검증 맹점 전면 철거 (수정: strategy_v14_vwap, strategy_reversion, queue_ledger, telegram_bot)"
 ]
