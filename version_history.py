@@ -189,5 +189,7 @@ VERSION_HISTORY = [
     "V26.03 [2026.04.15] 🚀 [영속성 듀얼 캐시(Persistence) 엔진 이식]: 서버 재시작 시 VWAP 잔차 및 예산이 증발하는 기억상실 맹점을 원천 방어하기 위해, L1(메모리)/L2(.json 파일) 원자적(fsync) 동기화 아키텍처를 V-REV 및 V14 VWAP 코어에 전면 탑재 완료. (수정: strategy_reversion, strategy_v14_vwap)",
     "V26.04 [2026.04.15] 🚨 [3분 가속 스윕 피니셔 전격 통합]: 장 마감 직전 VWAP 엔진 데드존(15:56~15:58)을 전면 철거하고, 장 마감 3분 전(15:57~16:00)부터 매도 가능 잔량이 0이 될 때까지 지속적으로 덤핑하는 클린업 스윕 로직으로 타임라인 완벽 병합. (수정: scheduler_trade)",
     "V26.05 [2026.04.15] 🚨 [졸업 카드 렌더링 UI 팩트 패치]: 졸업 이미지(PIL) 생성 시 로컬 폰트 누락으로 인한 붕괴를 방어하기 위해 범용 폰트 경로를 대거 증설하고, FileNotFoundError 차단을 위한 절대 경로 배경 이미지(background.png) 강제 복사 파일망 이식. (수정: telegram_bot, telegram_view)",
-    "V26.06 [2026.04.15] 🚨 [런타임 붕괴 완벽 방어 및 Safe Draw 래퍼 이식]: V-REV 0주 스윕 시 장부 소각 직전 진입 평단과 실현 수익을 캡처하는 '메모리 스냅샷' 연결 완료. PIL 비트맵 폰트 강제 폴백 시 anchor 정렬 미지원 에러를 우회하는 수학적 중앙 정렬 래퍼(_safe_draw_text) 전면 적용. (수정: telegram_bot, telegram_view)"
+    "V26.06 [2026.04.15] 🚨 [런타임 붕괴 완벽 방어 및 Safe Draw 래퍼 이식]: V-REV 0주 스윕 시 장부 소각 직전 진입 평단과 실현 수익을 캡처하는 '메모리 스냅샷' 연결 완료. PIL 비트맵 폰트 강제 폴백 시 anchor 정렬 미지원 에러를 우회하는 수학적 중앙 정렬 래퍼(_safe_draw_text) 전면 적용. (수정: telegram_bot, telegram_view)",
+    "V27.00 [2026.04.15] 🚀 [시스템 자가 업데이트(Self-Update) 엔진 탑재]: 깃허브 강제 동기화(git fetch & reset) 및 GCP 데몬(systemctl) 자동 재가동을 통한 무결점 원격 패치 아키텍처 및 2단계 승인 락온 이식 완비 (수정: plugin_updater 신설, telegram_bot, telegram_view, main)",
+    "V27.01 [2026.04.16] 🚀 [일일 지시서 스냅샷 엔진 이식]: 정규장(17:05) 확정 타점을 파일에 박제하고 우선 참조하도록 라우팅하여 장중 잔고 변이(0주->1주)에 따른 타점 왜곡 원천 차단 (수정: strategy_reversion, strategy_v14_vwap, scheduler_trade, telegram_bot)"
 ]

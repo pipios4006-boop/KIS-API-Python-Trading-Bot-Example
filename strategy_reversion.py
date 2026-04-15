@@ -11,9 +11,9 @@
 # 🚨 [V25.17 잔재 소각] 수동 통제망(Telegram) 전환에 따른 자동 긴급 수혈(get_emergency_liquidation_qty) 레거시 함수 영구 삭제
 # 🚨 [V25.20 엣지 케이스 패치] 0주 새출발 시 줍줍(Sweep) 타점 생성 원천 차단 (단일 라우터 방어막 이식)
 # 🚀 [V26.03 영속성 캐시 이식] 서버 재시작 시 잔차 증발(기억상실)을 방어하는 L1/L2 듀얼 캐싱 엔진 탑재
+# 🚀 [V27.01 지시서 스냅샷] 매일 17:05 확정 지시서를 박제하여 장중 잔고 변이에 따른 타점 왜곡 원천 차단
 # ==========================================================
 import math
-# NEW: [V26.03 영속성 캐시 이식] 파일 시스템 I/O 및 시간 처리를 위한 내장 모듈 임포트
 import os
 import json
 import tempfile
@@ -21,33 +21,32 @@ from datetime import datetime
 
 class ReversionStrategy:
     def __init__(self):
-        # NEW: [V25.15] 매도 잔여 물량 추적 저장소를 지층별로 완벽히 분리
         self.residual = {
             "BUY1": {}, "BUY2": {}, 
             "SELL_L1": {}, "SELL_UPPER": {}, "SELL_JACKPOT": {}
         }
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
-        
-        # NEW: [V26.03] 메모리 로드 상태 추적 (중복 로드 방지용 L1 캐시 플래그)
         self.state_loaded = {}
         
-        # 5년치 실데이터 기반 장마감 30분 비중 정규화 적용 (합산 1.0)
         self.U_CURVE_WEIGHTS = [
             0.0252, 0.0213, 0.0192, 0.0210, 0.0189, 0.0187, 0.0228, 0.0203, 0.0200, 0.0209,
             0.0254, 0.0217, 0.0225, 0.0211, 0.0228, 0.0281, 0.0262, 0.0240, 0.0236, 0.0256,
             0.0434, 0.0294, 0.0327, 0.0362, 0.0549, 0.0566, 0.0407, 0.0470, 0.0582, 0.1515
         ]
 
-    # NEW: [V26.03] L1/L2 듀얼 캐싱을 위한 파일 경로 생성기
     def _get_state_file(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         return f"data/vwap_state_REV_{today_str}_{ticker}.json"
 
-    # NEW: [V26.03] 봇 재시작(기절) 시 L2 캐시(.json)에서 L1 캐시(Memory)로 팩트 복원
+    # NEW: [V27.01] 일일 지시서 스냅샷 파일 경로 생성
+    def _get_snapshot_file(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        return f"data/daily_snapshot_REV_{today_str}_{ticker}.json"
+
     def _load_state_if_needed(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         if self.state_loaded.get(ticker) == today_str:
-            return # 이미 오늘 자 상태가 메모리에 로드됨
+            return 
             
         state_file = self._get_state_file(ticker)
         if os.path.exists(state_file):
@@ -64,14 +63,12 @@ class ReversionStrategy:
             except Exception:
                 pass
                 
-        # 파일이 없거나 어제 데이터면 영구 0으로 초기화
         for k in self.residual.keys():
             self.residual[k][ticker] = 0.0
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
 
-    # NEW: [V26.03] 상태 변경 시 L1 캐시(Memory)를 L2 캐시(.json)에 원자적(fsync)으로 영구 동기화
     def _save_state(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         state_file = self._get_state_file(ticker)
@@ -93,8 +90,42 @@ class ReversionStrategy:
         except Exception:
             pass
 
+    # NEW: [V27.01] 17:05 KST 정규장 스케줄러가 호출하여 그날의 확정 지시서를 파일에 박제
+    def save_daily_snapshot(self, ticker, plan_data):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        snap_file = self._get_snapshot_file(ticker)
+        data = {
+            "date": today_str,
+            "plan": plan_data
+        }
+        try:
+            dir_name = os.path.dirname(snap_file)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(fd)
+            os.replace(temp_path, snap_file)
+        except Exception:
+            pass
+
+    # NEW: [V27.01] /sync 조회 또는 VWAP 엔진이 박제된 지시서를 우선적으로 로드
+    def load_daily_snapshot(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        snap_file = self._get_snapshot_file(ticker)
+        if os.path.exists(snap_file):
+            try:
+                with open(snap_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str:
+                        return data.get("plan")
+            except Exception:
+                pass
+        return None
+
     def reset_residual(self, ticker):
-        # MODIFIED: [V26.03] 메모리 초기화 후 L2 캐시(.json)에도 영구 각인하여 리셋 사실 보존
         self._load_state_if_needed(ticker)
         self.residual["BUY1"][ticker] = 0.0
         self.residual["BUY2"][ticker] = 0.0
@@ -106,7 +137,6 @@ class ReversionStrategy:
         self._save_state(ticker)
 
     def record_execution(self, ticker, side, qty, exec_price):
-        # MODIFIED: [V26.03] 체결량 누적 후 L2 캐시(.json)에 안전하게 영구 저장
         self._load_state_if_needed(ticker)
         if side == "BUY":
             spent = qty * exec_price
@@ -115,8 +145,13 @@ class ReversionStrategy:
             self.executed["SELL_QTY"][ticker] = self.executed["SELL_QTY"].get(ticker, 0) + qty
         self._save_state(ticker)
 
-    def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data):
-        # NEW: [V26.03] VWAP 연산 전, 봇 재시작 등으로 인한 L1/L2 메모리 유실이 없는지 동기화 검증
+    def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False):
+        # NEW: [V27.01] 스냅샷 로드 모드일 경우 박제된 지시서를 최우선 반환
+        if not is_snapshot_mode:
+            cached_plan = self.load_daily_snapshot(ticker)
+            if cached_plan:
+                return cached_plan
+
         self._load_state_if_needed(ticker)
 
         if min_idx < 0 or min_idx >= 30:
@@ -127,7 +162,6 @@ class ReversionStrategy:
         total_inv = sum(item.get('qty', 0) * item.get('price', 0.0) for item in q_data)
         avg_price = (total_inv / total_q) if total_q > 0 else 0.0
         
-        # MODIFIED: [V25.14] 지층 데이터 분석 및 디커플링 역산
         dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
         l1_qty, l1_price = 0, 0.0
         
@@ -140,7 +174,6 @@ class ReversionStrategy:
         upper_inv = total_inv - (l1_qty * l1_price)
         upper_avg = upper_inv / upper_qty if upper_qty > 0 else 0.0
 
-        # 타점 3대장 수학적 정의
         trigger_jackpot = round(avg_price * 1.010, 2)
         trigger_l1 = round(l1_price * 1.006, 2)
         trigger_upper = round(upper_avg * 1.005, 2) if upper_qty > 0 else 0.0
@@ -160,8 +193,7 @@ class ReversionStrategy:
 
         orders = []
 
-        # 🚀 17:05 선제적 장전 및 장중 스나이퍼 개입 (LOC/Market)
-        if trigger_loc:
+        if trigger_loc or is_snapshot_mode:
             total_spent = self.executed["BUY_BUDGET"].get(ticker, 0.0)
             rem_budget = max(0.0, alloc_cash - total_spent)
             if rem_budget > 0:
@@ -174,7 +206,6 @@ class ReversionStrategy:
                 if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger})
                 if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger})
                 
-                # MODIFIED: [V25.20 엣지 케이스 패치] 0주 새출발 시 줍줍(Sweep) 타점 생성 원천 차단 (디커플링 통제)
                 if total_q > 0:
                     max_n = 5
                     if curr_p > 0:
@@ -190,11 +221,9 @@ class ReversionStrategy:
                 
             rem_qty_total = max(0, total_q - self.executed["SELL_QTY"].get(ticker, 0))
             if rem_qty_total > 0:
-                # 컷오프 1순위: 잭팟 (전체 스윕)
                 if curr_p >= trigger_jackpot:
                     orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot})
                 else:
-                    # 컷오프 2순위: 1층 단독 & 상위층 분리 (개별 발사)
                     available_l1 = min(l1_qty, rem_qty_total)
                     if available_l1 > 0 and curr_p >= trigger_l1:
                         orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
@@ -203,9 +232,14 @@ class ReversionStrategy:
                     if available_upper > 0 and trigger_upper > 0 and curr_p >= trigger_upper:
                         orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper})
             
-            return {"orders": orders, "trigger_loc": True}
+            plan_result = {"orders": orders, "trigger_loc": True, "total_q": total_q}
+            
+            # NEW: [V27.01] 스냅샷 모드로 호출된 경우 결과 반환 직전 파일에 박제
+            if is_snapshot_mode:
+                self.save_daily_snapshot(ticker, plan_result)
+                
+            return plan_result
 
-        # 🕒 장 마감 30분 VWAP 타임 슬라이싱 (1분 단위)
         rem_weight = sum(self.U_CURVE_WEIGHTS[min_idx:])
         slice_ratio_sell = current_weight / rem_weight if rem_weight > 0 else 1.0
         
@@ -213,10 +247,9 @@ class ReversionStrategy:
         slice_ratio_buy = current_weight / total_weight if total_weight > 0 else 1.0
 
         if side == "BUY":
-            # MODIFIED: 매수 타임슬라이싱 로직 무손실 복원
             total_spent = self.executed["BUY_BUDGET"].get(ticker, 0.0)
             if total_spent >= alloc_cash:
-                return {"orders": [], "trigger_loc": False}
+                return {"orders": [], "trigger_loc": False, "total_q": total_q}
             
             b1_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
             b2_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
@@ -238,9 +271,8 @@ class ReversionStrategy:
         else: # SELL
             rem_qty_total = max(0, total_q - self.executed["SELL_QTY"].get(ticker, 0))
             if rem_qty_total <= 0:
-                return {"orders": [], "trigger_loc": False}
+                return {"orders": [], "trigger_loc": False, "total_q": total_q}
 
-            # 1순위: 잭팟 스캐닝 (도달 시 1층/상위층 연산 폐쇄 및 전량 스윕 할당)
             if curr_p >= trigger_jackpot:
                 exact_qs = (total_q * slice_ratio_sell) + self.residual["SELL_JACKPOT"].get(ticker, 0.0)
                 alloc_qs = min(math.floor(exact_qs), rem_qty_total)
@@ -249,8 +281,6 @@ class ReversionStrategy:
                     orders.append({"side": "SELL", "qty": alloc_qs, "price": trigger_jackpot})
             
             else:
-                # 2순위: 지층별 개별 타임 슬라이싱 (Decoupled Loop)
-                # A. 1층 루프
                 if l1_qty > 0 and curr_p >= trigger_l1:
                     exact_l1 = (l1_qty * slice_ratio_sell) + self.residual["SELL_L1"].get(ticker, 0.0)
                     alloc_l1 = min(math.floor(exact_l1), rem_qty_total)
@@ -259,7 +289,6 @@ class ReversionStrategy:
                         orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1})
                         rem_qty_total -= alloc_l1
 
-                # B. 상위층 루프
                 if upper_qty > 0 and trigger_upper > 0 and curr_p >= trigger_upper and rem_qty_total > 0:
                     exact_upper = (upper_qty * slice_ratio_sell) + self.residual["SELL_UPPER"].get(ticker, 0.0)
                     alloc_upper = min(math.floor(exact_upper), rem_qty_total)
@@ -267,6 +296,5 @@ class ReversionStrategy:
                     if alloc_upper > 0:
                         orders.append({"side": "SELL", "qty": alloc_upper, "price": trigger_upper})
 
-        # MODIFIED: [V26.03] 잔차(residual) 업데이트가 발생했으므로 L2 캐시(.json)에 안전하게 영구 저장
         self._save_state(ticker)
-        return {"orders": orders, "trigger_loc": False}
+        return {"orders": orders, "trigger_loc": False, "total_q": total_q}

@@ -16,6 +16,8 @@
 # 🚀 [V26.02 핵심 수술] V14 오리지널 집행 방식(LOC/VWAP) 선택용 2단계 렌더러 신설 및 지시서 동기화
 # 🚨 [V26.05 UI 렌더링 패치] 졸업 이미지 폰트(Microscopic Bitmap) 붕괴 방어용 로컬 및 범용 폰트 경로 대거 증설
 # 🚨 [V26.06 런타임 붕괴 방어] PIL 비트맵 폰트 강제 폴백 시 anchor 정렬 미지원에 따른 에러 우회 래퍼 이식
+# 🚀 [V27.00 자가 업데이트 라우터 이식] 2단계 승인 대기 확인 UI 렌더링 추가
+# 🚨 [V27.01 UI 팩트 교정] 휴먼 에러 방지를 위한 /update 명령어 최하단 격리 렌더링 적용
 # ==========================================================
 import os
 import math
@@ -49,7 +51,6 @@ class TelegramView:
                 continue
         return ImageFont.load_default()
 
-    # MODIFIED: [V26.06 런타임 붕괴 방어] 기본 비트맵 폰트 강제 폴백 시 anchor 속성 미지원으로 인한 PIL 붕괴 방어 래퍼
     def _safe_draw_text(self, draw, xy, text, font, fill, anchor="mm"):
         try:
             draw.text(xy, str(text), font=font, fill=fill, anchor=anchor)
@@ -87,8 +88,26 @@ class TelegramView:
         msg += "▶️ /version : 🛠️ 버전 및 업데이트 내역\n\n"
         
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
-        msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 외화RP매도 등 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제'를 눌러 닻을 올려주세요!"
+        msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 외화RP매도 등 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제'를 눌러 닻을 올려주세요!\n\n"
+        
+        # 💡 [핵심 수술] 사용자의 오터치 방지를 위해 /update 명령어를 /reset 경고문보다 더 하단으로 격리 배치
+        msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)\n"
         return msg
+
+    # NEW: [V27.00 자가 업데이트 라우터 이식] 2단계 승인 대기 UI 렌더링
+    def get_update_confirm_menu(self):
+        msg = "🚨 <b>[ 시스템 코어 자가 업데이트 (Self-Update) ]</b>\n\n"
+        msg += "깃허브(GitHub) 원격 서버에 접속하여 <b>최신 퀀트 엔진 코드</b>를 로컬에 강제로 동기화(Hard Reset)합니다.\n\n"
+        msg += "⚠️ <b>[ 파괴적 동기화 경고 ]</b>\n"
+        msg += "▫️ 사용자가 직접 수정한 파이썬 코드는 <b>전부 초기화</b>됩니다.\n"
+        msg += "▫️ 단, 개인 설정(.env)과 장부 데이터(data/ 폴더)는 완벽히 <b>보존</b>됩니다.\n\n"
+        msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
+
+        keyboard = [
+            [InlineKeyboardButton("🔥 네, 즉시 업데이트를 강행합니다", callback_data="UPDATE:CONFIRM")],
+            [InlineKeyboardButton("❌ 아니오, 취소합니다", callback_data="UPDATE:CANCEL")]
+        ]
+        return msg, InlineKeyboardMarkup(keyboard)
 
     def get_reset_menu(self, active_tickers):
         msg = "🔥 <b>[ 삼위일체 소각 (Nuke) 프로토콜 ]</b>\n\n"
@@ -186,6 +205,8 @@ class TelegramView:
 # 🌟 100% 통합 완성본 🌟
 # 🚨 [V26.05 UI 렌더링 패치] 졸업 이미지 폰트(Microscopic Bitmap) 붕괴 방어용 로컬 및 범용 폰트 경로 대거 증설 연동
 # 🚨 [V26.06 런타임 붕괴 방어] _safe_draw_text 래퍼 함수 전면 적용을 통한 비트맵 폰트 중앙 정렬 붕괴 완벽 차단
+# 🚀 [V27.00 자가 업데이트 라우터 이식] 2단계 승인 뷰포트 연결 완료
+# 🚨 [V27.01 UI 팩트 교정] 휴먼 에러 방지를 위한 /update 명령어 최하단 격리 렌더링 적용
 # ==========================================================
 
     def get_emergency_moc_confirm_menu(self, ticker, emergency_qty, emergency_price):
@@ -235,7 +256,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V26.02 하이브리드 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V27.00 하이브리드 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -670,7 +691,6 @@ class TelegramView:
         y_title = IMG_H + 60
         draw.rectangle([W/2 - 140, y_title - 45, W/2 + 140, y_title + 45], fill="#2A2F3D")
         
-        # MODIFIED: [V26.06] _safe_draw_text 래퍼로 텍스트 드로잉 전면 치환 (비트맵 폰트 붕괴 차단)
         self._safe_draw_text(draw, (W/2, y_title), f"{ticker}", font=f_title, fill="white", anchor="mm")
         
         color = "#007AFF" if profit < 0 else "#FF3B30"

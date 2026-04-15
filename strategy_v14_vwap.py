@@ -8,10 +8,10 @@
 # 🚨 [V26.02 팩트 동기화] 비파괴 보정(CALIB) 및 Safe Casting 완벽 이식
 # 🚨 [V26.02 핫픽스] UI 렌더링 누락 버그(별%, 진행상태) 팩트 복원
 # 🚀 [V26.03 영속성 캐시 이식] 서버 재시작 시 잔차 증발(기억상실)을 방어하는 L1/L2 듀얼 캐싱 엔진 탑재
+# 🚀 [V27.01 지시서 스냅샷] 매일 17:05 확정 지시서를 박제하여 장중 잔고 변이에 따른 타점 왜곡 원천 차단
 # ==========================================================
 import math
 import logging
-# NEW: [V26.03 영속성 캐시 이식] 파일 시스템 I/O 및 시간 처리를 위한 내장 모듈 임포트
 import os
 import json
 import tempfile
@@ -22,8 +22,6 @@ class V14VwapStrategy:
         self.cfg = config
         self.residual = {"BUY_AVG": {}, "BUY_STAR": {}, "SELL_STAR": {}, "SELL_TARGET": {}}
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
-        
-        # NEW: [V26.03] 메모리 로드 상태 추적 (중복 로드 방지용 L1 캐시 플래그)
         self.state_loaded = {}
         
         self.U_CURVE_WEIGHTS = [
@@ -32,16 +30,19 @@ class V14VwapStrategy:
             0.0434, 0.0294, 0.0327, 0.0362, 0.0549, 0.0566, 0.0407, 0.0470, 0.0582, 0.1515
         ]
 
-    # NEW: [V26.03] L1/L2 듀얼 캐싱을 위한 파일 경로 생성기
     def _get_state_file(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         return f"data/vwap_state_V14_{today_str}_{ticker}.json"
 
-    # NEW: [V26.03] 봇 재시작(기절) 시 L2 캐시(.json)에서 L1 캐시(Memory)로 팩트 복원
+    # NEW: [V27.01] 일일 지시서 스냅샷 파일 경로 생성
+    def _get_snapshot_file(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        return f"data/daily_snapshot_V14VWAP_{today_str}_{ticker}.json"
+
     def _load_state_if_needed(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         if self.state_loaded.get(ticker) == today_str:
-            return # 이미 오늘 자 상태가 메모리에 로드됨
+            return 
             
         state_file = self._get_state_file(ticker)
         if os.path.exists(state_file):
@@ -58,14 +59,12 @@ class V14VwapStrategy:
             except Exception:
                 pass
                 
-        # 파일이 없거나 어제 데이터면 영구 0으로 초기화
         for k in self.residual.keys():
             self.residual[k][ticker] = 0.0
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
 
-    # NEW: [V26.03] 상태 변경 시 L1 캐시(Memory)를 L2 캐시(.json)에 원자적(fsync)으로 영구 동기화
     def _save_state(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         state_file = self._get_state_file(ticker)
@@ -87,11 +86,45 @@ class V14VwapStrategy:
         except Exception:
             pass
 
+    # NEW: [V27.01] 17:05 KST 정규장 스케줄러가 호출하여 그날의 확정 지시서를 파일에 박제
+    def save_daily_snapshot(self, ticker, plan_data):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        snap_file = self._get_snapshot_file(ticker)
+        data = {
+            "date": today_str,
+            "plan": plan_data
+        }
+        try:
+            dir_name = os.path.dirname(snap_file)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(fd)
+            os.replace(temp_path, snap_file)
+        except Exception:
+            pass
+
+    # NEW: [V27.01] /sync 조회 또는 VWAP 엔진이 박제된 지시서를 우선적으로 로드
+    def load_daily_snapshot(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        snap_file = self._get_snapshot_file(ticker)
+        if os.path.exists(snap_file):
+            try:
+                with open(snap_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str:
+                        return data.get("plan")
+            except Exception:
+                pass
+        return None
+
     def _ceil(self, val): return math.ceil(val * 100) / 100.0
     def _floor(self, val): return math.floor(val * 100) / 100.0
 
     def reset_residual(self, ticker):
-        # MODIFIED: [V26.03] 메모리 초기화 후 L2 캐시(.json)에도 영구 각인하여 리셋 사실 보존
         self._load_state_if_needed(ticker)
         for k in self.residual: self.residual[k][ticker] = 0.0
         self.executed["BUY_BUDGET"][ticker] = 0.0
@@ -99,7 +132,6 @@ class V14VwapStrategy:
         self._save_state(ticker)
 
     def record_execution(self, ticker, side, qty, exec_price):
-        # MODIFIED: [V26.03] 체결량 누적 후 L2 캐시(.json)에 안전하게 영구 저장
         self._load_state_if_needed(ticker)
         if side == "BUY":
             spent = qty * exec_price
@@ -108,7 +140,13 @@ class V14VwapStrategy:
             self.executed["SELL_QTY"][ticker] = self.executed["SELL_QTY"].get(ticker, 0) + qty
         self._save_state(ticker)
 
-    def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False):
+    def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, is_snapshot_mode=False):
+        # NEW: [V27.01] 스냅샷 로드 모드일 경우 박제된 지시서를 최우선 반환
+        if not is_snapshot_mode:
+            cached_plan = self.load_daily_snapshot(ticker)
+            if cached_plan:
+                return cached_plan
+
         split = self.cfg.get_split_count(ticker)
         target_ratio = self.cfg.get_target_profit(ticker) / 100.0
         t_val, _ = self.cfg.get_absolute_t_val(ticker, qty, avg_price)
@@ -121,7 +159,6 @@ class V14VwapStrategy:
         _, dynamic_budget, _ = self.cfg.calculate_v14_state(ticker)
         
         core_orders = []
-        # MODIFIED: [V26.02 핫픽스] 주문 진행 상태 텍스트 할당 로직 복원
         process_status = "예방적방어선"
         
         if qty == 0:
@@ -146,8 +183,7 @@ class V14VwapStrategy:
                 if qty - q_sell > 0:
                     core_orders.append({"side": "SELL", "price": target_price, "qty": qty - q_sell, "type": "LIMIT", "desc": "🎯목표매도(V)"})
 
-        # MODIFIED: [V26.02 핫픽스] 텔레그램 뷰어가 요구하는 UI 변수(star_ratio, process_status, tracking_info) 100% 리턴
-        return {
+        plan_result = {
             'core_orders': core_orders, 'bonus_orders': [], 'orders': core_orders,
             't_val': t_val, 'one_portion': dynamic_budget, 'star_price': star_price,
             'star_ratio': star_ratio,
@@ -155,12 +191,17 @@ class V14VwapStrategy:
             'process_status': process_status,
             'tracking_info': {}
         }
+        
+        # NEW: [V27.01] 스냅샷 모드로 호출된 경우 결과 반환 직전 파일에 박제
+        if is_snapshot_mode:
+            self.save_daily_snapshot(ticker, plan_result)
+            
+        return plan_result
 
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, min_idx, alloc_cash, qty, avg_price):
-        # NEW: [V26.03] VWAP 연산 전, 봇 재시작 등으로 인한 L1/L2 메모리 유실이 없는지 동기화 검증
         self._load_state_if_needed(ticker)
         
-        plan_static = self.get_plan(ticker, curr_p, avg_price, qty, prev_c, is_simulation=True)
+        plan_static = self.get_plan(ticker, curr_p, avg_price, qty, prev_c, is_simulation=True, is_snapshot_mode=False)
         star_price = plan_static['star_price']
         target_price = plan_static['target_price']
         total_budget = plan_static['one_portion']
@@ -191,6 +232,5 @@ class V14VwapStrategy:
                 if alloc_s_qty > 0:
                     orders.append({"side": "SELL", "qty": alloc_s_qty, "price": star_price, "desc": "VWAP분할익절"})
 
-        # MODIFIED: [V26.03] 잔차(residual) 업데이트가 발생했으므로 L2 캐시(.json)에 안전하게 영구 저장
         self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False}

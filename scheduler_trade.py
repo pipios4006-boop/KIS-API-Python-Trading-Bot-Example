@@ -14,6 +14,7 @@
 # 🚀 [V26.02 핵심 수술] V14 무매 오리지널의 VWAP 슬라이싱 스케줄러 통합 확장
 # 🚨 [V26.03 핫픽스] V-REV 자동매매 시 줍줍(Grid) 누락 복원 및 수동 모드 스케줄러 100% 락다운 이식
 # 🚨 [V26.04 스위프 패치] VWAP 엔진 데드존(15:56~15:58) 철거 및 3분간(15:57~16:00)의 지속적 클린업 스윕 피니셔로 통합
+# 🚀 [V27.01 지시서 스냅샷] 매일 17:05 확정 지시서를 박제하고, 16:05 EST에 초기화하는 파이프라인 이식 완료
 # ==========================================================
 import os
 import logging
@@ -140,17 +141,35 @@ async def scheduled_sniper_monitor(context):
                     continue
 
 # ==========================================================
-# 2. 🛡️ Fail-Safe: 선제적 LOC 취소 (기본 스케줄러, 자가치유로 보완됨)
+# 2. 🛡️ Fail-Safe: 선제적 LOC 취소 (VWAP 엔진 기상과 동기화 완료)
 # ==========================================================
 async def scheduled_vwap_init_and_cancel(context):
     if not is_market_open(): return
+    
+    est = pytz.timezone('US/Eastern')
+    now_est = datetime.datetime.now(est)
+    
+    try:
+        nyse = mcal.get_calendar('NYSE')
+        schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
+        if schedule.empty: return
+        market_close = schedule.iloc[0]['market_close'].astimezone(est)
+    except Exception:
+        market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+    # NEW: [V27.01] V25.24 패치로 3분 앞당겨진 VWAP 기상 시간(장 마감 33분 전)과 완벽 동기화
+    vwap_start_time = market_close - datetime.timedelta(minutes=33)
+    vwap_end_time = market_close 
+    
+    if not (vwap_start_time <= now_est <= vwap_end_time):
+        return
     
     app_data = context.job.data
     cfg, broker, tx_lock = app_data['cfg'], app_data['broker'], app_data['tx_lock']
     chat_id = context.job.chat_id
     
     vwap_cache = app_data.setdefault('vwap_cache', {})
-    today_str = datetime.datetime.now(pytz.timezone('US/Eastern')).strftime('%Y%m%d')
+    today_str = now_est.strftime('%Y%m%d')
     if vwap_cache.get('date') != today_str:
         vwap_cache.clear()
         vwap_cache['date'] = today_str
@@ -161,25 +180,25 @@ async def scheduled_vwap_init_and_cancel(context):
                 version = cfg.get_version(t)
                 is_manual_vwap = getattr(cfg, 'get_manual_vwap_mode', lambda x: False)(t)
                 
-                # MODIFIED: [V26.03 핫픽스] V-REV의 수동(Manual) 모드일 경우 API 자동 셧다운 방어
                 if version == "V_REV" and is_manual_vwap:
                     continue
                 
-                # V-REV(Auto) 또는 V14(VWAP) 모드인 경우 예방적 LOC 덫 Nuke 가동
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
-                    try:
-                        await asyncio.to_thread(broker.cancel_all_orders_safe, t, "BUY")
-                        await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
-                        vwap_cache[f"REV_{t}_nuked"] = True
-                        
-                        msg = f"🌅 <b>[{t}] 장 마감 33분 전 엔진 기상 (Fail-Safe 전환)</b>\n"
-                        msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)합니다.\n"
-                        msg += f"▫️ 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
-                        await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
-                        await asyncio.sleep(1.0)
-                    except Exception as e:
-                        logging.error(f"🚨 Fail-Safe 초기화(Nuke) 에러: {e}")
-                        vwap_cache[f"REV_{t}_nuked"] = False 
+                    # NEW: [V27.01] 중복 취소(Double Nuke) 방어를 위한 플래그 검사 이식
+                    if not vwap_cache.get(f"REV_{t}_nuked"):
+                        try:
+                            await asyncio.to_thread(broker.cancel_all_orders_safe, t, "BUY")
+                            await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
+                            vwap_cache[f"REV_{t}_nuked"] = True
+                            
+                            msg = f"🌅 <b>[{t}] 장 마감 33분 전 엔진 기상 (Fail-Safe 전환)</b>\n"
+                            msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)합니다.\n"
+                            msg += f"▫️ 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
+                            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
+                            await asyncio.sleep(1.0)
+                        except Exception as e:
+                            logging.error(f"🚨 Fail-Safe 초기화(Nuke) 에러: {e}")
+                            vwap_cache[f"REV_{t}_nuked"] = False 
                     
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
@@ -189,6 +208,8 @@ async def scheduled_vwap_init_and_cancel(context):
 # [scheduler_trade.py] - Part 2/2 부 (하반부)
 # 🌟 100% 통합 완성본 🌟
 # 🚨 [V26.04 스위프 패치] VWAP 엔진 데드존(15:56~15:58) 철거 및 3분간(15:57~16:00)의 지속적 클린업 스윕 피니셔로 통합
+# 🚀 [V27.01 지시서 스냅샷] 매일 17:05 확정 지시서를 박제하고, 장중 잔고 변이(0주->1주) 시에도 흔들리지 않도록 디커플링 이식
+# 🚀 [V27.01 초기화 파이프라인] 애프터마켓 로터리 덫 종료 시 모든 스냅샷을 영구 삭제(초기화) 완료
 # ==========================================================
 
 async def scheduled_vwap_trade(context):
@@ -206,7 +227,6 @@ async def scheduled_vwap_trade(context):
         market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         
     vwap_start_time = market_close - datetime.timedelta(minutes=33)
-    # MODIFIED: [V26.04] 데드존 철거. 장 마감 순간(16:00)까지 엔진 가동을 허용하여 스위프 피니셔와 타임라인 완벽 병합
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -262,7 +282,6 @@ async def scheduled_vwap_trade(context):
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}")
                             continue
 
-                    # MODIFIED: [V26.04] sweep_finished 블로킹 로직 원천 적출 (지속 덤핑 허용)
                     curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
                     prev_c = float(await asyncio.to_thread(broker.get_previous_close, t) or 0.0)
                     if curr_p <= 0 or prev_c <= 0: continue
@@ -274,6 +293,11 @@ async def scheduled_vwap_trade(context):
                         
                         q_data = queue_ledger.get_queue(t)
                         total_q = sum(item.get("qty", 0) for item in q_data)
+                        
+                        # NEW: [V27.01] 0주 새출발 모드 절대 방어막 (잔고가 변해도 BUY 유지)
+                        cached_plan = strategy_rev.load_daily_snapshot(t)
+                        is_zero_start = (cached_plan and cached_plan.get("total_q", -1) == 0)
+                        virtual_q_data = [] if is_zero_start else q_data
                         
                         if vwap_cache.get(f"REV_{t}_was_holding", False) and total_q == 0:
                             continue
@@ -294,8 +318,8 @@ async def scheduled_vwap_trade(context):
                                 layer_1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / layer_1_qty
                                 layer_1_trigger = round(layer_1_price * 1.006, 2)
                         
-                        # MODIFIED: [V26.04] 장 마감 3분 전(15:57~16:00) 3분 가속 스위프(Sweep) 지속 격발 구역
-                        if minutes_to_close <= 3:
+                        # 0주 새출발일 경우 당일 1층 줍줍 스윕(Sweep) 원천 생략
+                        if not is_zero_start and minutes_to_close <= 3:
                             target_sweep_qty = 0
                             sweep_type = ""
                             
@@ -323,7 +347,6 @@ async def scheduled_vwap_trade(context):
                                         odno = res.get('odno', '')
                                         
                                         if res.get('rt_cd') == '0' and odno:
-                                            # 메시지는 중복 방지를 위해 최초 1회만 타전
                                             if not vwap_cache.get(f"REV_{t}_sweep_msg_sent"):
                                                 msg = f"🌪️ <b>[{t}] V-REV 본대 {sweep_type} 3분 가속 스윕(Sweep) 개시!</b>\n"
                                                 if "잭팟" in sweep_type:
@@ -352,7 +375,6 @@ async def scheduled_vwap_trade(context):
                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                             vwap_cache[f"REV_{t}_sweep_skip_msg"] = True
                                             
-                            # 💡 스위프 조건에 부합하면 해당 분(Minute)의 일반 VWAP 슬라이싱 로직은 건너뜀 (다음 분에 재스캔)
                             if target_sweep_qty > 0 or (total_q > 0 and curr_p >= jackpot_trigger):
                                 continue 
                         
@@ -362,10 +384,10 @@ async def scheduled_vwap_trade(context):
                         except Exception:
                             vwap_status = {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
                         
-                        current_regime = "SELL" if curr_p > prev_c else "BUY"
+                        current_regime = "BUY" if is_zero_start else ("SELL" if curr_p > prev_c else "BUY")
                         last_regime = vwap_cache.get(f"REV_{t}_regime")
                         
-                        if last_regime and last_regime != current_regime:
+                        if not is_zero_start and last_regime and last_regime != current_regime:
                             await context.bot.send_message(
                                 chat_id=chat_id, 
                                 text=f"🔄 <b>[{t}] 실시간 공수 교대 발동!</b>\n"
@@ -388,13 +410,28 @@ async def scheduled_vwap_trade(context):
 
                         rev_daily_budget = float(cfg.get_seed(t) or 0.0) * 0.15
                         
+                        # NEW: [V27.01] 스냅샷 파일 임시 은폐 (get_dynamic_plan이 VWAP 슬라이싱을 100% 정상 수행하도록 유도)
+                        snap_file = strategy_rev._get_snapshot_file(t)
+                        hidden = False
+                        if os.path.exists(snap_file):
+                            try:
+                                os.rename(snap_file, snap_file + ".hide")
+                                hidden = True
+                            except: pass
+                            
                         rev_plan = strategy_rev.get_dynamic_plan(
                             ticker=t, curr_p=curr_p, prev_c=prev_c, 
                             current_weight=current_weight, vwap_status=vwap_status, 
-                            min_idx=min_idx, alloc_cash=rev_daily_budget, q_data=q_data
+                            min_idx=min_idx, alloc_cash=rev_daily_budget, q_data=virtual_q_data,
+                            is_snapshot_mode=False
                         )
                         
-                        if rev_plan.get('trigger_loc') and minutes_to_close >= 15:
+                        # NEW: [V27.01] 스냅샷 복원 (/sync 조회용)
+                        if hidden and os.path.exists(snap_file + ".hide"):
+                            try: os.rename(snap_file + ".hide", snap_file)
+                            except: pass
+                        
+                        if not is_zero_start and rev_plan.get('trigger_loc') and minutes_to_close >= 15:
                             vwap_cache[f"REV_{t}_loc_fired"] = True
                             msg = f"🛡️ <b>[{t}] 60% 거래량 지배력 감지 (추세장 전환)</b>\n"
                             msg += f"▫️ 기관급 자금 쏠림으로 인해 위험한 1분 단위 타임 슬라이싱(VWAP)을 전면 중단합니다.\n"
@@ -503,7 +540,7 @@ async def scheduled_regular_trade(context):
 
     await context.bot.send_message(
         chat_id=chat_id, 
-        text=f"🌃 <b>[{target_hour}:05] 통합 주문 장전!</b>\n"
+        text=f"🌃 <b>[{target_hour}:05] 통합 주문 장전 및 스냅샷 박제!</b>\n"
              f"🛡️ 서버 접속 부하 방지를 위해 <b>{jitter_seconds}초</b> 대기 후 안전하게 주문 전송을 시도합니다.", 
         parse_mode='HTML'
     )
@@ -591,6 +628,24 @@ async def scheduled_regular_trade(context):
                                         grid_p = round(half_portion_cash / (b2_qty + n), 2)
                                         if grid_p >= 0.01 and grid_p < b2_price:
                                             loc_orders.append({'side': 'BUY', 'qty': 1, 'price': grid_p, 'type': 'LOC', 'desc': f'예방적 줍줍({n})'})
+                        
+                        # NEW: [V27.01] 17:05 확정 지시서를 파일에 영구 박제 (Snapshot)
+                        plan_result = {
+                            "orders": loc_orders,
+                            "trigger_loc": True,
+                            "total_q": v_rev_q_qty
+                        }
+                        if hasattr(strategy_rev, 'save_daily_snapshot'):
+                            strategy_rev.save_daily_snapshot(t, plan_result)
+                            
+                            # HACK: KST 타임존 오차 방어를 위해 내일 새벽(VWAP 시점)용 복사본 동시 생성
+                            today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                            tomorrow_str = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                            old_snap = f"data/daily_snapshot_REV_{today_str}_{t}.json"
+                            new_snap = f"data/daily_snapshot_REV_{tomorrow_str}_{t}.json"
+                            if os.path.exists(old_snap):
+                                import shutil
+                                shutil.copy(old_snap, new_snap)
 
                         msgs[t] += f"🛡️ <b>[{t}] V-REV 예방적 양방향 LOC 방어선 장전 완료</b>\n"
                         if safe_qty == 0 or v_rev_q_qty == 0:
@@ -598,12 +653,26 @@ async def scheduled_regular_trade(context):
 
                     elif version == "V14":
                         ma_5day = float(await asyncio.to_thread(broker.get_5day_ma, t) or 0.0)
-                        v14_plan = strategy.v14_vwap_plugin.get_plan(
+                        v14_vwap_plugin = strategy.v14_vwap_plugin
+                        
+                        # NEW: [V27.01] is_snapshot_mode=True 를 호출하여 파일에 지시서를 박제
+                        v14_plan = v14_vwap_plugin.get_plan(
                             ticker=t, current_price=curr_p, avg_price=safe_avg, qty=safe_qty, 
                             prev_close=prev_c, ma_5day=ma_5day, market_type="REG", 
-                            available_cash=allocated_cash.get(t, 0.0), is_simulation=False
+                            available_cash=allocated_cash.get(t, 0.0), is_simulation=False,
+                            is_snapshot_mode=True
                         )
                         loc_orders = v14_plan.get('core_orders', [])
+                        
+                        # HACK: KST 타임존 오차 방어를 위해 내일 새벽(VWAP 시점)용 복사본 동시 생성
+                        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                        tomorrow_str = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                        old_snap = f"data/daily_snapshot_V14VWAP_{today_str}_{t}.json"
+                        new_snap = f"data/daily_snapshot_V14VWAP_{tomorrow_str}_{t}.json"
+                        if os.path.exists(old_snap):
+                            import shutil
+                            shutil.copy(old_snap, new_snap)
+                        
                         msgs[t] += f"🛡️ <b>[{t}] 무매4(VWAP) 예방적 LOC 덫 장전 완료</b>\n"
 
                     all_success = True
@@ -754,6 +823,17 @@ async def scheduled_after_market_lottery(context):
                         await context.bot.send_message(chat_id=chat_id, text=fail_msg, parse_mode='HTML')
 
                     await asyncio.sleep(0.2)
+                    
+            # NEW: [V27.01] 로터리 덫 전송 및 하루의 사이클이 끝난 직후, 쌓여있는 모든 스냅샷 파일을 완벽히 소각(초기화)
+            try:
+                for t in cfg.get_active_tickers():
+                    for prefix in ["REV", "V14VWAP"]:
+                        for f in glob.glob(f"data/daily_snapshot_{prefix}_*_{t}.json"):
+                            try: os.remove(f)
+                            except: pass
+                logging.info("🧹 [스냅샷 초기화] 익일 새로운 작전 수립을 위해 당일 지시서 스냅샷 파일을 모두 소각했습니다.")
+            except Exception as e:
+                logging.error(f"🚨 스냅샷 파일 초기화 실패: {e}")
 
     try:
         await asyncio.wait_for(_do_lottery(), timeout=60.0)

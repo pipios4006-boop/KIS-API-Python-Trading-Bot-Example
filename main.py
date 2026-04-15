@@ -7,6 +7,7 @@
 # 💡 [V24.20 패치] 듀얼 레퍼런싱(SOXX/SOXL) 인프라 및 스냅샷 파이프라인 증설
 # 🚨 [V25.19 핫픽스] EST/KST 타임존 혼용에 따른 스케줄링 오작동 방어 (명시적 타임존 주입)
 # 🚨 [V25.19 핫픽스] 듀얼 레퍼런싱(TICKER_BASE_MAP) 전역 공유 파이프라인 완벽 확립
+# 🚀 [V27.00 자가 업데이트 라우터 이식] 텔레그램 핸들러 루프에 'update' 명령어 공식 등록 완료
 # ==========================================================
 
 import os
@@ -177,6 +178,7 @@ def main():
         .build()
     )
     
+    # MODIFIED: [V27.00] "update" 명령어를 앱 핸들러 루프에 공식 등록 완료
     for cmd, handler in [
         ("start", bot.cmd_start), 
         ("record", bot.cmd_record), 
@@ -187,7 +189,8 @@ def main():
         ("ticker", bot.cmd_ticker), 
         ("mode", bot.cmd_mode), 
         ("reset", bot.cmd_reset), 
-        ("version", bot.cmd_version)
+        ("version", bot.cmd_version),
+        ("update", bot.cmd_update)
     ]:
         app.add_handler(CommandHandler(cmd, handler))
         
