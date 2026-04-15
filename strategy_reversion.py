@@ -12,6 +12,7 @@
 # 🚨 [V25.20 엣지 케이스 패치] 0주 새출발 시 줍줍(Sweep) 타점 생성 원천 차단 (단일 라우터 방어막 이식)
 # 🚀 [V26.03 영속성 캐시 이식] 서버 재시작 시 잔차 증발(기억상실)을 방어하는 L1/L2 듀얼 캐싱 엔진 탑재
 # 🚀 [V27.01 지시서 스냅샷] 매일 17:05 확정 지시서를 박제하여 장중 잔고 변이에 따른 타점 왜곡 원천 차단
+# 🚨 [V27.03 핫픽스] 스냅샷 로드 시 내부 날짜 검사(Validation) 전면 폐기로 무한루프 영구 방어
 # ==========================================================
 import math
 import os
@@ -38,7 +39,6 @@ class ReversionStrategy:
         today_str = datetime.now().strftime("%Y-%m-%d")
         return f"data/vwap_state_REV_{today_str}_{ticker}.json"
 
-    # NEW: [V27.01] 일일 지시서 스냅샷 파일 경로 생성
     def _get_snapshot_file(self, ticker):
         today_str = datetime.now().strftime("%Y-%m-%d")
         return f"data/daily_snapshot_REV_{today_str}_{ticker}.json"
@@ -53,13 +53,13 @@ class ReversionStrategy:
             try:
                 with open(state_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    if data.get("date") == today_str:
-                        for k in self.residual.keys():
-                            self.residual[k][ticker] = data.get("residual", {}).get(k, 0.0)
-                        for k in self.executed.keys():
-                            self.executed[k][ticker] = data.get("executed", {}).get(k, 0.0)
-                        self.state_loaded[ticker] = today_str
-                        return
+                    # MODIFIED: [V27.03] 날짜 검사(Validation) 폐기 - 파일 존재만으로 맹신
+                    for k in self.residual.keys():
+                        self.residual[k][ticker] = data.get("residual", {}).get(k, 0.0)
+                    for k in self.executed.keys():
+                        self.executed[k][ticker] = data.get("executed", {}).get(k, 0.0)
+                    self.state_loaded[ticker] = today_str
+                    return
             except Exception:
                 pass
                 
@@ -90,7 +90,6 @@ class ReversionStrategy:
         except Exception:
             pass
 
-    # NEW: [V27.01] 17:05 KST 정규장 스케줄러가 호출하여 그날의 확정 지시서를 파일에 박제
     def save_daily_snapshot(self, ticker, plan_data):
         today_str = datetime.now().strftime("%Y-%m-%d")
         snap_file = self._get_snapshot_file(ticker)
@@ -111,16 +110,14 @@ class ReversionStrategy:
         except Exception:
             pass
 
-    # NEW: [V27.01] /sync 조회 또는 VWAP 엔진이 박제된 지시서를 우선적으로 로드
     def load_daily_snapshot(self, ticker):
-        today_str = datetime.now().strftime("%Y-%m-%d")
         snap_file = self._get_snapshot_file(ticker)
         if os.path.exists(snap_file):
             try:
                 with open(snap_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    if data.get("date") == today_str:
-                        return data.get("plan")
+                    # MODIFIED: [V27.03] 날짜 검사(Validation) 폐기 - 파일 존재만으로 맹신
+                    return data.get("plan")
             except Exception:
                 pass
         return None
@@ -146,7 +143,6 @@ class ReversionStrategy:
         self._save_state(ticker)
 
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False):
-        # NEW: [V27.01] 스냅샷 로드 모드일 경우 박제된 지시서를 최우선 반환
         if not is_snapshot_mode:
             cached_plan = self.load_daily_snapshot(ticker)
             if cached_plan:
@@ -234,7 +230,6 @@ class ReversionStrategy:
             
             plan_result = {"orders": orders, "trigger_loc": True, "total_q": total_q}
             
-            # NEW: [V27.01] 스냅샷 모드로 호출된 경우 결과 반환 직전 파일에 박제
             if is_snapshot_mode:
                 self.save_daily_snapshot(ticker, plan_result)
                 
