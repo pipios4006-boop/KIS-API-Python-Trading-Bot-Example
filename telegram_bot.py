@@ -1502,7 +1502,7 @@ class TelegramController:
             else:
                 msg += "\n⚠️ <b>일부 필수 주문 실패 (매매 잠금 보류)</b>"
 
-        await context.bot.send_message(update.effective_chat.id, msg, parse_mode='HTML')
+            await context.bot.send_message(update.effective_chat.id, msg, parse_mode='HTML')
 
         elif action == "SET_VER":
             new_ver = sub
