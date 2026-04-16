@@ -7,6 +7,7 @@
 # 🚨 [V25.23 디커플링] KIS API 하드코딩 종속성 적출 및 범용 1분봉 컬럼 정규화 완비
 # 🚨 [V27.06 긴급 수술] NameError (#ffffff) 소각 및 ZeroDivision 방어막 구축
 # 🚨 [V27.07 그랜드 수술] 코파일럿 합작 - 20MA NaN 붕괴, VWAP 침묵, 10시 누수, 소수점 주문 4대 맹점 전면 철거
+# 🚨 [V27.16 핫픽스] 20MA 시차 왜곡 차단, RVOL 정수 파싱, 소수점 매도 차단 및 ZeroDivision 영구 차단 완비
 # ==========================================================
 import logging
 import datetime
@@ -29,12 +30,20 @@ class VAvwapHybridPlugin:
             df_daily = tkr.history(period="2mo", interval="1d", timeout=5)
             df_30m = tkr.history(period="60d", interval="30m", timeout=5)
 
-            # 🚨 [수술 완료] 20MA의 iloc[-2] 연산을 위해 최소 21일치 데이터 보장 (NaN 붕괴 원천 차단)
-            if df_daily.empty or len(df_daily) < 21 or df_30m.empty:
+            # MODIFIED: [과거 캔들 참조 오류(iloc[-2] 맹점) 방어] EST 기준 당일(Today) 데이터를 명시적으로 제외하여 어제 종가 기준을 완벽 고정
+            today_est = datetime.datetime.now(pytz.timezone('US/Eastern')).date()
+            if df_daily.index.tz is None:
+                df_daily.index = df_daily.index.tz_localize('UTC').tz_convert('US/Eastern')
+            else:
+                df_daily.index = df_daily.index.tz_convert('US/Eastern')
+
+            df_past = df_daily[df_daily.index.date < today_est]
+
+            if df_past.empty or len(df_past) < 20 or df_30m.empty:
                 return None
 
-            prev_close = float(df_daily['Close'].iloc[-2])
-            ma_20 = float(df_daily['Close'].rolling(window=20).mean().iloc[-2])
+            prev_close = float(df_past['Close'].iloc[-1])
+            ma_20 = float(df_past['Close'].rolling(window=20).mean().iloc[-1])
 
             # 🚨 [수술 완료] 연산 결과가 NaN일 경우 컨텍스트 무효화
             if math.isnan(ma_20) or math.isnan(prev_close):
@@ -46,7 +55,6 @@ class VAvwapHybridPlugin:
                 df_30m.index = df_30m.index.tz_convert('US/Eastern')
 
             first_30m = df_30m[df_30m.index.time == datetime.time(9, 30)]
-            today_est = datetime.datetime.now(pytz.timezone('US/Eastern')).date()
             past_first_30m = first_30m[first_30m.index.date < today_est]
             
             if len(past_first_30m) >= 20:
@@ -90,10 +98,21 @@ class VAvwapHybridPlugin:
                     base_vwap = df['vol_tp'].sum() / cum_vol
                     vwap_success = True
                 
-                # 🚨 [수술 완료] 문자열 규격화(zfill) 및 10:00 캔들 누수 차단('100000')
+                # MODIFIED: [문자열 시간 비교 붕괴 방어] datetime 객체 혼입 시 ASCII 비교 실패 방지를 위한 HHMMSS 정수형 형변환 교정
                 if 'time_est' in df.columns:
-                    df['time_est'] = df['time_est'].astype(str).str.zfill(6)
-                    mask_30m = (df['time_est'] >= '093000') & (df['time_est'] < '100000')
+                    def _to_hhmiss_int(t):
+                        if isinstance(t, (datetime.time, datetime.datetime)):
+                            return t.hour * 10000 + t.minute * 100 + t.second
+                        if isinstance(t, pd.Timestamp):
+                            return t.hour * 10000 + t.minute * 100 + t.second
+                        s = str(t).replace(':', '').replace(' ', '')[:6].zfill(6)
+                        try:
+                            return int(s)
+                        except ValueError:
+                            return -1
+
+                    df['time_int'] = df['time_est'].apply(_to_hhmiss_int)
+                    mask_30m = (df['time_int'] >= 93000) & (df['time_int'] < 100000)
                     base_current_30m_vol = df.loc[mask_30m, 'vol'].sum()
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 1분봉 VWAP 연산 실패: {e}")
@@ -102,19 +121,28 @@ class VAvwapHybridPlugin:
         if not vwap_success and avwap_qty == 0:
             return {'action': 'WAIT', 'reason': 'VWAP_데이터_결측_동결', 'vwap': base_vwap}
 
-        if avwap_qty > 0:
+        # MODIFIED: [소수점 유령 매도 붕괴 차단] int 강제 캐스팅 선행을 통한 0주 매도 Reject 원천 차단
+        safe_qty = int(math.floor(float(avwap_qty)))
+        if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
+            
+            # MODIFIED: [ZeroDivision 에러 런타임 붕괴 방어] safe_avg 0달러 폴백 감지 시 즉각 하드스탑 처리
+            if safe_avg <= 0:
+                logging.error("🚨 [V_AVWAP] safe_avg <= 0: 가격 데이터 결측, 하드스탑 강제 집행")
+                return {'action': 'SELL', 'qty': safe_qty, 'target_price': 0.0, 'reason': 'CORRUPT_PRICE_HARD_STOP'}
+                
             exec_return = (exec_curr_p - safe_avg) / safe_avg
+            # 🚨 [팩트 유지] -3% 하드스탑 암살자 룰 보존 (SOXL 손실을 3.0으로 나누어 -1% 베이스 임계치와 비교)
             base_equivalent_return = exec_return / self.leverage
             
             if base_equivalent_return <= -self.base_stop_loss_pct:
-                return {'action': 'SELL', 'qty': int(avwap_qty), 'target_price': 0.0, 'reason': 'HARD_STOP_DUAL'}
+                return {'action': 'SELL', 'qty': safe_qty, 'target_price': 0.0, 'reason': 'HARD_STOP_DUAL'}
             
             if curr_time >= time_1555:
-                return {'action': 'SELL', 'qty': int(avwap_qty), 'target_price': 0.0, 'reason': 'TIME_STOP'}
+                return {'action': 'SELL', 'qty': safe_qty, 'target_price': 0.0, 'reason': 'TIME_STOP'}
                 
             if vwap_success and curr_time >= time_1430 and base_curr_p >= base_vwap * (1 + self.base_target_pct):
-                return {'action': 'SELL', 'qty': int(avwap_qty), 'target_price': 0.0, 'reason': 'SQUEEZE_TARGET_DUAL'}
+                return {'action': 'SELL', 'qty': safe_qty, 'target_price': 0.0, 'reason': 'SQUEEZE_TARGET_DUAL'}
                 
             return {'action': 'HOLD', 'reason': '보유중_관망', 'vwap': base_vwap}
 
