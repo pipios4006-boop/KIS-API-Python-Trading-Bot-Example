@@ -208,5 +208,8 @@ VERSION_HISTORY = [
     "V27.15 [2026.04.16] 🚨 [Telegram Bot 관제탑 그랜드 수술 (✨코파일럿 AI 합작)]: tx_lock 병목(Starvation) 해체, 0.0달러 매도 폭탄 제거, 런타임 즉사(Attribute/KeyError) 방어, Atomic Write 도입 및 Dangling 코드 복구 (수정: telegram_bot)",
     "V27.16 [2026.04.16] 🚨 [Telegram View 렌더링 코어 수술 (✨코파일럿 AI 합작)]: KeyError 런타임 즉사 방어(Safe Get), FileNotFoundError 졸업카드 증발 차단, 외화 RP 이중 계산 환각 UI 제거 및 유령 지층(None Date) 통제망 구축 완료 (수정: telegram_view)",
     "V27.17 [2026.04.16] 🚨 [Volatility Engine 코어 그랜드 수술 (✨코파일럿 AI 합작)]: 가중치 무제한 폭주(Black Swan) 락온 방어(0.5~2.0), UnboundLocalError 런타임 즉사 교정, 임시 파일 찌꺼기(Disk Leak) 소각, 야후 파이낸스 다중인덱스(MultiIndex) 붕괴 스마트 우회 엔진 및 ATR 최소 데이터 검증망 이식 (수정: volatility_engine)",
-    "V27.18 [2026.04.16] 🚨 [Broker 코어 팩트 교정 (✨코파일럿 AI 합작)]: 5분봉 고가/저가(H/L) 스캔 범위 정상화, 주문 취소 정밀도(break) 교정, 매도 가능 수량(ord_psbl_qty) 안전 폴백(0) 적용, 토큰 오발탄(mig) 제거 및 ATR 결측치(NaN) 방어. 주식 정수 매매 원칙에 따른 소수점 내림(Truncation) 및 잔여 예산 이월 로직 100% 원상 복구 (수정: broker)"
+    "V27.18 [2026.04.16] 🚨 [Broker 코어 팩트 교정 (✨코파일럿 AI 합작)]: 5분봉 고가/저가(H/L) 스캔 범위 정상화, 주문 취소 정밀도(break) 교정, 매도 가능 수량(ord_psbl_qty) 안전 폴백(0) 적용, 토큰 오발탄(mig) 제거 및 ATR 결측치(NaN) 방어. 주식 정수 매매 원칙에 따른 소수점 내림(Truncation) 및 잔여 예산 이월 로직 100% 원상 복구 (수정: broker)",
+    "V27.19 [2026.04.17] 🚨 [Scheduler Core 6대 치명적 맹점 전면 수술]: 달력 API Fail-Open 붕괴 방어, 일반 종목이 리버스 예산을 탈취하는 누수(Escrow Leak) 원천 차단, 0주 타겟 ZeroDivision 방어, TOCTOU 레이스 조건 락온, 그리고 하드스탑 격발 시 주문 취소 실패(Orphan Order)를 감지하여 장부 초기화를 보류하는 팩트 방어막 완벽 이식 (수정: scheduler_core)",
+    "V27.20 [2026.04.17] 🚀 [파이어게이트식 확정 정산 아키텍처 이식 (✨승승장군 제안)]: 가결제 착시와 이중 장부 엇박자로 인한 수익률 왜곡 원천 차단. 봇의 '0주 스윕 즉시 졸업 카드 발급' 로직을 전면 폐기하고, 아침 09:01에 증권사 서버의 수수료/세금이 100% 반영된 '실현손익 팩트 데이터'를 직접 스캔하여 단 1회 오차 없는 졸업 카드를 자동 출력하도록 스케줄러 대수술 완료 (수정: scheduler_core)",
+    "V27.21 [2026.04.17] 🚨 [스케줄러 Time Drift 완벽 방어]: 서버 틱 지연이나 스레드 블로킹으로 인해 09:01 정각을 놓쳐 졸업 카드가 영구 누락되는 맹점을 해결하기 위해, 정산 윈도우를 5분(09:01~09:05)으로 넓히고 원자적 락온(tx_lock)을 결합하여 멱등성(Idempotency)을 보장하는 무결점 스케줄러 완성 (수정: scheduler_core)"
 ]
