@@ -20,7 +20,8 @@
 # 🚀 [V28.02 그랜드 수술] 코파일럿 엣지 케이스 3대 결함(DST 데드락 65분 확장, prev_c 결측 텔레그램 타전, tx_lock 콜드스타트 가드) 전면 수술 완료
 # 🚀 [V28.03 그랜드 수술] 엣지 케이스 4대 결함(이중 매도 방지, 클램핑 수학 모순 교정, 큐 증발 폴백, 잠금 스킵 타전) 및 UX 렌더링 충돌 교정 완비
 # 🚀 [V28.04 그랜드 수술] VWAP 엔진 내 prev_c 앵커(Lock-on) 고정 및 was_holding 영속성 듀얼 캐싱 방어막 이식 완비
-# MODIFIED: [V28.07 그랜드 수술] 장중 스냅샷 강제 은폐(Hide) 및 파괴 레거시 전면 적출 (0주 새출발 기억상실 하극상 버그 영구 차단)
+# 🚨 [V28.07 그랜드 수술] 장중 스냅샷 강제 은폐(Hide) 및 파괴 레거시 전면 적출 (0주 새출발 기억상실 하극상 버그 영구 차단)
+# MODIFIED: [V28.08 세션 오염 방어] 내일 날짜 스냅샷 복사(Copy) 레거시 100% 영구 적출. 야간 청소 스케줄러 기절 시 발생하는 어제의 0주 스냅샷 환각 버그 차단 완료.
 # ==========================================================
 import os
 import logging
@@ -447,8 +448,6 @@ async def scheduled_vwap_trade(context):
 
                         rev_daily_budget = float(cfg.get_seed(t) or 0.0) * 0.15
                         
-                        # MODIFIED: [V28.07 스냅샷 영구 박제] 장중 스냅샷 강제 은폐(Hide) 레거시 100% 적출 완료.
-                        # 0주 새출발 디커플링 타점 기준을 보존하여 기억상실(Amnesia) 하극상 엣지 케이스 원천 차단.
                         rev_plan = None
                         try:
                             rev_plan = strategy_rev.get_dynamic_plan(
@@ -595,7 +594,6 @@ async def scheduled_regular_trade(context):
         est = pytz.timezone('US/Eastern')
         _now_est = datetime.datetime.now(est)
         today_str_est = _now_est.strftime("%Y-%m-%d")
-        tomorrow_str_est = (_now_est + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
         
         async with tx_lock:
             cash, holdings = await asyncio.to_thread(broker.get_account_balance)
@@ -733,14 +731,9 @@ async def scheduled_regular_trade(context):
                             "trigger_loc": True,
                             "total_q": v_rev_q_qty
                         }
+                        # MODIFIED: [V28.08 세션 오염 방어] 내일 날짜로 스냅샷을 강제 복사하던 레거시 로직 전면 삭제
                         if hasattr(strategy_rev, 'save_daily_snapshot'):
                             strategy_rev.save_daily_snapshot(t, plan_result)
-                            
-                            old_snap = f"data/daily_snapshot_REV_{today_str_est}_{t}.json"
-                            new_snap = f"data/daily_snapshot_REV_{tomorrow_str_est}_{t}.json"
-                            if os.path.exists(old_snap):
-                                import shutil
-                                shutil.copy(old_snap, new_snap)
 
                         if safe_qty == 0 or v_rev_q_qty == 0:
                             msgs[t] += "🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
@@ -757,12 +750,7 @@ async def scheduled_regular_trade(context):
                         )
                         loc_orders = v14_plan.get('core_orders', [])
                         
-                        old_snap = f"data/daily_snapshot_V14VWAP_{today_str_est}_{t}.json"
-                        new_snap = f"data/daily_snapshot_V14VWAP_{tomorrow_str_est}_{t}.json"
-                        if os.path.exists(old_snap):
-                            import shutil
-                            shutil.copy(old_snap, new_snap)
-                        
+                        # MODIFIED: [V28.08 세션 오염 방어] V14 분기 내일 날짜 스냅샷 복사 레거시 전면 삭제
                         msgs[t] += f"🛡️ <b>[{t}] 무매4(VWAP) 예방적 LOC 덫 장전 완료</b>\n"
 
                     sell_success_count = 0
