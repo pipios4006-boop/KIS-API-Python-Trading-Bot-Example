@@ -3,6 +3,8 @@
 # MODIFIED: [V28.14 통이관 및 큐 삭제 런타임 에러 완전 소각]
 # MODIFIED: [V28.15 그랜드 수술] 물량 통이관(SET_INIT) 콜백 라우터 영구 소각 및 
 # V14 <-> V-REV 모드 전환 시 실잔고 '0주 락온(Lock-on)' 절대 방어막 이식 완료
+# MODIFIED: [V28.16 UX 팩트 패치] 0주 락온 발동 시 일회성 팝업(Alert) 무반응 맹점을 해체하고 
+# 옵션 A(직관성 최우선) 텍스트로 기존 화면을 덮어써서 영구 박제하는 렌더링 수술 완료
 # ==========================================================
 import logging
 import datetime
@@ -502,7 +504,12 @@ class TelegramCallbacks:
             qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
             
             if qty > 0:
-                await query.answer(f"🚨 [전환 차단] {ticker} 잔고가 {qty}주 있습니다. 0주(전량 매도) 상태에서만 모드 전환이 가능합니다.", show_alert=True)
+                # MODIFIED: [V28.16] 0주 락온 시각적 팩트 메시지(옵션A) 영구 박제 렌더링으로 교체 (묵음 현상 해결)
+                msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단 ]</b>\n\n"
+                msg += f"현재 <b>[{ticker}] {qty}주</b>를 보유 중입니다.\n"
+                msg += "V14 ↔ V-REV 간의 엔진 스위칭은 장부 평단가 오염을 막기 위해 <b>'0주(100% 현금)'</b> 상태에서만 절대적으로 허용됩니다.\n\n"
+                msg += "진행 중인 매매 사이클을 전량 익절(0주)로 마무리하신 후 다시 시도해 주십시오."
+                await query.edit_message_text(msg, parse_mode='HTML')
                 return
             
             if new_ver == "V_REV":
@@ -537,7 +544,12 @@ class TelegramCallbacks:
             qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
             
             if qty > 0:
-                await query.answer(f"🚨 [전환 차단] {ticker} 잔고가 {qty}주 있습니다. 0주(전량 매도) 상태에서만 모드 전환이 가능합니다.", show_alert=True)
+                # MODIFIED: [V28.16] 0주 락온 시각적 팩트 메시지(옵션A) 영구 박제 렌더링으로 교체 (묵음 현상 해결)
+                msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단 ]</b>\n\n"
+                msg += f"현재 <b>[{ticker}] {qty}주</b>를 보유 중입니다.\n"
+                msg += "V14 ↔ V-REV 간의 엔진 스위칭은 장부 평단가 오염을 막기 위해 <b>'0주(100% 현금)'</b> 상태에서만 절대적으로 허용됩니다.\n\n"
+                msg += "진행 중인 매매 사이클을 전량 익절(0주)로 마무리하신 후 다시 시도해 주십시오."
+                await query.edit_message_text(msg, parse_mode='HTML')
                 return
             
             if mode_type in ["AUTO", "MANUAL"]:
