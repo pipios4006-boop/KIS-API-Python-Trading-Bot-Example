@@ -28,6 +28,7 @@
 # MODIFIED: [V28.22 스냅샷 렌더링 디커플링 수술] 졸업 카드 발급 버튼 생성 시 history_id를 수신하여 콜백 데이터에 각인(Lock-on)하도록 파라미터 및 버튼 렌더링 로직 교정 완료
 # MODIFIED: [V28.25 그랜드 수술] 수수료 설정 UI 버튼 및 동적 수수료율 상태 렌더링 파이프라인 개통 완료
 # MODIFIED: [V28.29 그랜드 수술] TQQQ V-REV 렌더링 맹점 차단 (SOXL 전용 락온 이식)
+# MODIFIED: [V28.34 UX 팩트 패치] V14 무매4 VWAP 모드의 settlement UI 렌더링 텍스트 맹점(수동 위임 표기) 팩트 교정 완료
 # ==========================================================
 import os
 import math
@@ -157,7 +158,7 @@ class TelegramView:
         msg += f"▫️ 총 보유 로트(Lot) : {len(q_data)} 개 층\n"
         msg += f"▫️ 총 장전 수량 : {total_q} 주\n"
         msg += f"▫️ 큐 통합 평단가 : ${avg_p:.2f}\n\n"
-        msg += "<b>[ LIFO 층별 상세 (최근 매 매수 순) ]</b>\n"
+        msg += "<b>[ LIFO 층별 상세 (최근 매수 순) ]</b>\n"
         msg += "<code>No. 일자        수량   평단가\n"
         msg += "-"*30 + "\n"
         
@@ -253,7 +254,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V27.00 하이브리드 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V28.00 하이브리드 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -495,16 +496,15 @@ class TelegramView:
         for t in active_tickers:
             ver = config.get_version(t)
             is_manual_vwap = getattr(config, 'get_manual_vwap_mode', lambda x: False)(t)
-            
-            # MODIFIED: [V28.25] 동적 수수료율 스캔
             fee_rate = getattr(config, 'get_fee', lambda x: 0.25)(t)
             
+            # MODIFIED: [V28.34] V14 모드일 때 수동 위임이라는 잘못된 텍스트 렌더링 팩트 교정
             if ver == "V_REV":
                 icon = "⚖️"
                 ver_display = "V_REV 역추세"
             else:
                 icon = "💎"
-                ver_display = "무매4 (VWAP/위임)" if is_manual_vwap else "무매4 (LOC)"
+                ver_display = "무매4 (VWAP)" if is_manual_vwap else "무매4 (LOC)"
                 
             split_cnt = int(config.get_split_count(t))
             target_pct = config.get_target_profit(t)
@@ -523,10 +523,10 @@ class TelegramView:
             else:
                 msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_pct}%\n▫️ 자동복리: {comp_rate}%\n"
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"
-                v14_mode_txt = "🖐️ 수동 위임 (한투 VWAP 알고리즘)" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
+                # MODIFIED: [V28.34] V14 VWAP의 렌더링 텍스트를 V-REV와 분리하여 직관적으로 교정
+                v14_mode_txt = "🕒 VWAP 1분 타임 슬라이싱 (자체엔진)" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
                 msg += f"▫️ 집행: <b>{v14_mode_txt}</b>\n\n"
                 
-            # MODIFIED: [V28.29 그랜드 수술] TQQQ V-REV 렌더링 맹점 차단 (SOXL 전용 락온 이식)
             if t == "SOXL":
                 row1 = [
                     InlineKeyboardButton("💎 V14 (무매4)", callback_data=f"SET_VER:V14:{t}"),
@@ -550,7 +550,6 @@ class TelegramView:
                 
                 keyboard.append([InlineKeyboardButton(avwap_txt, callback_data=avwap_cb)])
             
-            # MODIFIED: [V28.25] 수수료 설정 버튼(INPUT:FEE) 추가 배선 연결
             if ver == "V_REV":
                 row2 = [
                     InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}"),
@@ -777,4 +776,3 @@ class TelegramView:
             [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
-
