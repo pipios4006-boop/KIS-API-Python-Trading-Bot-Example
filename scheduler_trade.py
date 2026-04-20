@@ -1,15 +1,12 @@
 # ==========================================================
-# [scheduler_trade.py] - 🌟 100% 통합 무결점 완성본 (V28.36) 🌟
+# [scheduler_trade.py] - 🌟 100% 통합 무결점 완성본 (V28.37) 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # MODIFIED: [V28.18] V14 오리지널 스냅샷 저장 배선 개통
 # NEW: [V28.21] 스냅샷 소각 맹점 적출 및 디커플링 무결성 확보
-# NEW: [V28.22] AI 환각 방어 백신 이식 (VWAP 디커플링 경고)
-# NEW: [V28.28] 수동 매도(뇌동매매)로 인한 0주 락온 디커플링 방어막
-# NEW: [V28.30] 애프터마켓 로터리 덫 휴장일 오발탄 원천 차단
-# NEW: [V28.31] 텔레그램 수동 제어 코어 통제망 이식
 # NEW: [V28.33] 코파일럿 아키텍처 채택: V14 상방 스나이퍼 100% 통합
 # 🛠️ [V28.35] VWAP/스나이퍼 잔고 스캔 리스트([]) 유입 타입 세이프 쉴드 이식
-# 🚀 [V28.36 API 병목 영구 적출] 승승장군 통찰 반영: 미체결 명단 소멸 시 '100% 전량 체결'로 즉시 간주하여 무거운 당일 체결 조회(get_execution_history) 통신 전면 삭제. 타임아웃 원천 차단!
+# 🚀 [V28.36 API 병목 영구 적출] 미체결 명단 소멸 시 '100% 전량 체결' 간주. 타임아웃 원천 차단!
+# 🛡️ [V28.37] 스윕 피니셔 발화 후 '잔고 증발' 오발탄 원천 차단: sweep_msg_sent 플래그 교차 참조 바이패스 가드 이식 (sniper_monitor + vwap_trade 2중 수술)
 # ==========================================================
 import os
 import logging
@@ -87,6 +84,7 @@ async def scheduled_sniper_monitor(context):
             for t in cfg.get_active_tickers():
                 version = cfg.get_version(t)
                 
+                # NEW: 수동 매도로 인한 0주 락온 디커플링 감지 방어막
                 if version == "V_REV":
                     h = safe_holdings.get(t) or {}
                     actual_qty = int(float(h.get('qty', 0)))
@@ -96,6 +94,11 @@ async def scheduled_sniper_monitor(context):
                         total_q = sum(item.get("qty", 0) for item in q_data)
                         
                         if actual_qty == 0 and total_q > 0:
+                            # 🛡️ MODIFIED: [V28.37] 스윕 피니셔 정상 발화 후 0주가 된 경우 오발탄 차단
+                            _vwap_cache_ref = app_data.get('vwap_cache', {})
+                            if _vwap_cache_ref.get(f"REV_{t}_sweep_msg_sent"):
+                                continue
+                                
                             if not tracking_cache.get(f"REV_{t}_panic_sell_warn"):
                                 tracking_cache[f"REV_{t}_panic_sell_warn"] = True
                                 await context.bot.send_message(
@@ -432,6 +435,10 @@ async def scheduled_vwap_trade(context):
                         total_q = sum(item.get("qty", 0) for item in q_data)
                         
                         if actual_qty == 0 and total_q > 0:
+                            # 🛡️ MODIFIED: [V28.37] 스윕 피니셔 정상 발화 후 0주가 된 경우 오발탄 차단
+                            if vwap_cache.get(f"REV_{t}_sweep_msg_sent"):
+                                continue
+                                
                             if not vwap_cache.get(f"REV_{t}_panic_sell_warn"):
                                 vwap_cache[f"REV_{t}_panic_sell_warn"] = True
                                 await context.bot.send_message(
@@ -517,7 +524,6 @@ async def scheduled_vwap_trade(context):
                                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                                 vwap_cache[f"REV_{t}_sweep_msg_sent"] = True
                                             
-                                            # 🚀 [V28.36 수술] 스윕 중 체결 조회(get_execution_history) 제거, 미체결 소멸 시 전량 체결 간주
                                             ccld_qty = 0
                                             for _ in range(4):
                                                 await asyncio.sleep(2.0)
@@ -528,7 +534,6 @@ async def scheduled_vwap_trade(context):
                                                 if my_order:
                                                     ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
                                                 else:
-                                                    # 미체결 리스트에 없다면 100% 체결 완료로 간주하고 즉시 루프 탈출
                                                     ccld_qty = actual_sweep_qty
                                                     break
                                             
@@ -644,7 +649,6 @@ async def scheduled_vwap_trade(context):
                         odno = res.get('odno', '')
                         
                         if res.get('rt_cd') == '0' and odno:
-                            # 🚀 [V28.36 수술] 일반 VWAP 체결 스캔도 미체결 기반 추론으로 전면 교체
                             ccld_qty = 0
                             for _ in range(4):
                                 await asyncio.sleep(2.0)
@@ -655,7 +659,6 @@ async def scheduled_vwap_trade(context):
                                 if my_order:
                                     ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
                                 else:
-                                    # 미체결 리스트에 없으면 100% 전량 체결!
                                     ccld_qty = slice_qty
                                     break
                                     
@@ -930,89 +933,4 @@ async def scheduled_regular_trade(context):
                 target_bonus = plans[t].get('bonus_orders', [])
                 for o in target_bonus:
                     res = broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
-                    msgs[t] += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {'✅' if res.get('rt_cd')=='0' else '❌(잔금패스)'}\n"
-                    await asyncio.sleep(0.2) 
-
-            for t in sorted_tickers:
-                if t not in plans: continue
-                target_orders = plans[t].get('core_orders', plans[t].get('orders', []))
-                target_bonus = plans[t].get('bonus_orders', [])
-                if not target_orders and not target_bonus: continue
-                
-                if all_success_map[t] and len(target_orders) > 0:
-                    cfg.set_lock(t, "REG")
-                    msgs[t] += "\n🔒 <b>필수 주문 정상 전송 완료 (잠금 설정됨)</b>"
-                elif not all_success_map[t] and len(target_orders) > 0:
-                    msgs[t] += "\n⚠️ <b>일부 필수 주문 실패 (매매 잠금 보류)</b>"
-                elif len(target_bonus) > 0:
-                    cfg.set_lock(t, "REG")
-                    msgs[t] += "\n🔒 <b>보너스 주문만 전송 완료 (잠금 설정됨)</b>"
-                    
-                if not any(tx[0] == t for tx in v_rev_tickers): 
-                    await context.bot.send_message(chat_id=chat_id, text=msgs[t], parse_mode='HTML')
-
-            return True, "SUCCESS"
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            success, fail_reason = await asyncio.wait_for(_do_regular_trade(), timeout=300.0)
-            if success:
-                if attempt > 1:
-                    await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 전송을 완수했습니다!</b>", parse_mode='HTML')
-                return 
-        except Exception as e:
-            logging.error(f"정규장 전송 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
-
-        if attempt < MAX_RETRIES:
-            if attempt == 1 or attempt % 5 == 0:
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 재시도합니다! 🛡️", parse_mode='HTML')
-            await asyncio.sleep(RETRY_DELAY)
-
-    await context.bot.send_message(chat_id=chat_id, text="🚨 <b>[긴급 에러] 통신 복구 최종 실패. 수동 점검 요망!</b>", parse_mode='HTML')
-
-# ==========================================================
-# 5. 🌙 애프터마켓 로터리 덫 (16:05 EST / 05:05 KST)
-# ==========================================================
-async def scheduled_after_market_lottery(context):
-    if not is_market_open(): return
-    
-    app_data = context.job.data
-    cfg, broker, tx_lock = app_data['cfg'], app_data['broker'], app_data['tx_lock']
-    chat_id = context.job.chat_id
-
-    async def _do_lottery():
-        async with tx_lock:
-            cash, holdings = await asyncio.to_thread(broker.get_account_balance)
-            if holdings is None: return
-            
-            safe_holdings = holdings if isinstance(holdings, dict) else {}
-
-            for t in cfg.get_active_tickers():
-                version = cfg.get_version(t)
-                if version != "V_REV": continue
-
-                is_manual_vwap = getattr(cfg, 'get_manual_vwap_mode', lambda x: False)(t)
-                if is_manual_vwap: continue
-
-                h = safe_holdings.get(t) or {}
-                qty = int(float(h.get('qty') or 0))
-                avg_price = float(h.get('avg') or 0.0)
-
-                if qty > 0 and avg_price > 0:
-                    target_price = math.ceil(avg_price * 1.030 * 100) / 100.0
-                    await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
-                    await asyncio.sleep(0.5)
-
-                    res = broker.send_order(t, "SELL", qty, target_price, "AFTER_LIMIT")
-                    if res.get('rt_cd') == '0':
-                        msg = f"🌙 <b>[{t}] 애프터마켓 3% 로터리 덫(Lottery Trap) 장전 완료</b>\n▫️ 대상 물량: <b>{qty}주</b>\n▫️ 타겟 가격: <b>${target_price:.2f}</b>"
-                        await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
-                    else:
-                        fail_msg = f"❌ <b>[{t}] 애프터마켓 덫 장전 실패:</b> {res.get('msg1', '에러')}"
-                        await context.bot.send_message(chat_id=chat_id, text=fail_msg, parse_mode='HTML')
-
-                    await asyncio.sleep(0.2)
-    try:
-        await asyncio.wait_for(_do_lottery(), timeout=60.0)
-    except Exception as e:
-        logging.error(f"🚨 애프터마켓 로터리 덫 에러: {e}", exc_info=True)
+                    msgs[t] += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {'✅' if res.get('
