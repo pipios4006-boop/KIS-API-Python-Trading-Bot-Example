@@ -20,6 +20,7 @@
 # MODIFIED: [V28.20 무조건 진입 투트랙] 0주 새출발 시 VWAP 런타임 타격에서 Buy1 상한선 방어막 철거 (스냅샷 락온과 완벽한 디커플링 이식)
 # NEW: [V28.22 AI 환각 방어 백신 이식] 공수 교대 로직에 AI 에이전트 오판 차단 경고 주석 하드코딩
 # NEW: [V28.27 자전거래 락온 방어막] 매도 단가 역전 시 매수 단가 강제 캡핑(Capping) 적용하여 API Reject 엣지 케이스 완벽 수술
+# MODIFIED: [V28.28 하이브리드 병합] 0주 -> 1주 전환 시 텔레그램 스냅샷(UI) 렌더링 디커플링 맹점 완벽 수술 (매도 팩트 동적 덮어쓰기 이식)
 # ==========================================================
 import math
 import os
@@ -177,17 +178,9 @@ class ReversionStrategy:
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False):
         min_idx = int(min_idx) if min_idx is not None else -1
 
-        if not is_snapshot_mode and min_idx < 0:
-            cached_plan = self.load_daily_snapshot(ticker)
-            if cached_plan:
-                return cached_plan
-
         self._load_state_if_needed(ticker)
 
-        if min_idx < 0 or min_idx >= 30:
-            if not vwap_status.get('is_strong_up') and not vwap_status.get('is_strong_down'):
-                return {"orders": [], "trigger_loc": False, "total_q": 0}
-
+        # MODIFIED: [V28.28 렌더링 맹점 수술] 스냅샷 하이브리드 병합을 위해 장부 실시간 팩트 스캔을 최상단으로 재배치
         valid_q_data = [item for item in q_data if float(item.get('price', 0.0)) > 0]
         total_q = sum(int(item.get("qty", 0)) for item in valid_q_data)
         total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in valid_q_data)
@@ -208,6 +201,37 @@ class ReversionStrategy:
         trigger_jackpot = round(avg_price * 1.010, 2)
         trigger_l1 = round(l1_price * 1.006, 2)
         trigger_upper = round(upper_avg * 1.005, 2) if upper_qty > 0 else 0.0
+
+        # MODIFIED: [V28.28 하이브리드 병합] 텔레그램 지시서 조회(min_idx < 0) 시,
+        # 매수(BUY) 스냅샷 원본은 100% 락온(보존)하되, 장중 체결로 변동된 총 수량(total_q)과 매도(SELL) 계획은 실시간 팩트로 오버라이드
+        if not is_snapshot_mode and min_idx < 0:
+            cached_plan = self.load_daily_snapshot(ticker)
+            if cached_plan:
+                buy_orders = [o for o in cached_plan.get("orders", []) if o.get("side") == "BUY"]
+                sell_orders = []
+                
+                rem_qty_total = max(0, int(total_q) - int(self.executed.get("SELL_QTY", {}).get(ticker, 0)))
+                if rem_qty_total > 0:
+                    sell_orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot})
+                    
+                    available_l1 = min(l1_qty, rem_qty_total)
+                    l1_queued = 0
+                    if available_l1 > 0:
+                        sell_orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
+                        l1_queued = available_l1
+                        
+                    available_upper = min(upper_qty, rem_qty_total - l1_queued)
+                    if available_upper > 0:
+                        sell_orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper})
+                
+                cached_plan["orders"] = buy_orders + sell_orders
+                cached_plan["snapshot_total_q"] = cached_plan.get("total_q", 0) 
+                cached_plan["total_q"] = total_q
+                return cached_plan
+
+        if min_idx < 0 or min_idx >= 30:
+            if not vwap_status.get('is_strong_up') and not vwap_status.get('is_strong_down'):
+                return {"orders": [], "trigger_loc": False, "total_q": total_q}
 
         if total_q == 0:
             side = "BUY"

@@ -29,6 +29,7 @@
 # MODIFIED: [V28.25 그랜드 수술] 수수료 설정 UI 버튼 및 동적 수수료율 상태 렌더링 파이프라인 개통 완료
 # MODIFIED: [V28.29 그랜드 수술] TQQQ V-REV 렌더링 맹점 차단 (SOXL 전용 락온 이식)
 # MODIFIED: [V28.34 UX 팩트 패치] V14 무매4 VWAP 모드의 settlement UI 렌더링 텍스트 맹점(수동 위임 표기) 팩트 교정 완료
+# MODIFIED: [V28.35] 0주 새출발 락온 시 엔진에서 누수된 잭팟/상방 가이던스 UI 렌더링 강제 은폐 및 스나이퍼 텍스트 디커플링 (상태 전이 맹점 방어)
 # ==========================================================
 import os
 import math
@@ -316,6 +317,8 @@ class TelegramView:
             v_mode = t_info['version']
             
             is_manual_vwap = t_info.get('is_manual_vwap', False)
+            # NEW: 0주 새출발 상태 팩트 추출 (상태 전이 맹점 차단용)
+            is_zero_start = t_info.get('is_zero_start', False)
             
             if t_info.get('t_val', 0.0) > (t_info.get('split', 40.0) * 1.1):
                 body_msg += "⚠️ <b>[🚨 시스템 긴급 경고: 비정상 T값 폭주 감지!]</b>\n"
@@ -381,6 +384,10 @@ class TelegramView:
             
             sniper_status_txt = t_info.get('upward_sniper', 'OFF')
             
+            # MODIFIED: [V28.35] 0주 락온 상태면 UI 레벨에서 상방 스나이퍼 텍스트 강제 차단 (디커플링)
+            if is_zero_start and sniper_status_txt == "ON":
+                sniper_status_txt = "OFF (0주 락온)"
+            
             if v_mode != "V_REV":
                 if is_rev:
                     body_msg += f"⚙️ 🌟 5일선 별지점: ${t_info['star_price']:.2f} | 🎯감시: {sniper_status_txt}\n"
@@ -414,6 +421,12 @@ class TelegramView:
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
                 
                 raw_guidance = t_info.get('v_rev_guidance', " (가이던스 대기 중)")
+                
+                # MODIFIED: [V28.35] 0주 락온 상태일 때 엔진에서 렌더링 누수된 '잭팟' 관련 텍스트 강제 소각
+                if is_zero_start:
+                    filtered_lines = [line for line in raw_guidance.split('\n') if "잭팟" not in line and "상위층" not in line]
+                    raw_guidance = '\n'.join(filtered_lines)
+
                 raw_guidance = raw_guidance.rstrip('\n')
                 body_msg += raw_guidance + "\n"
 
