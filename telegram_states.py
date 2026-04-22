@@ -7,7 +7,7 @@
 # MODIFIED: [V28.25 동적 수수료율 텍스트 입력 라우터 수술] 
 # 사용자가 텔레그램 창에 입력한 수수료(%)를 파싱하여 config에 저장하는 CONF_FEE 상태 처리 로직 완벽 이식.
 # NEW: [V28.31] 텔레그램 하단 고정 키보드 텍스트 라우팅 복구 (코파일럿 방식 채택)
-# 🚨 [V28.50 NEW] 암살자 조기 퇴근 목표 수익률(AVWAP_TARGET) 텍스트 입력/저장 라우터 개통
+# 🚨 [V29.00 NEW] 암살자 조기 퇴근 목표 수익률(AVWAP_TARGET) 텍스트 입력/저장 라우터 개통
 # ==========================================================
 # NEW: [리팩토링 2단계] 유저 텍스트 입력 및 상태 기계(State Machine) 독립 클래스 분리
 import logging
@@ -127,7 +127,7 @@ class TelegramStates:
                     
                 return
 
-            # 🚨 [V28.50 NEW] 사용자 조기 퇴근 목표 수익률 텍스트 입력 라우터
+            # 🚨 [V29.00 NEW] 사용자 조기 퇴근 목표 수익률 텍스트 입력 라우터
             if state.startswith("AVWAP_TARGET_"):
                 val = float(text)
                 if val <= 0:
