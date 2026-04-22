@@ -8,6 +8,7 @@
 # 🚀 [V26.02 핵심 수술] V14 오리지널 모드 내 LOC/VWAP 집행 방식 이원화 라우팅 탑재
 # 🚀 [V26.07 확정 순수익 렌더링 패치] V-REV 메모리 스냅샷 수수료(0.5%) 완벽 차감 이식
 # MODIFIED: [V28.25 그랜드 수술] V-REV 메모리 스냅샷에 동적 수수료 팩트 역산 엔진 이식 완료
+# 🚨 [V28.51 팩트 수술] 정규장 스케줄러 TypeError 붕괴 및 AVWAP 스나이퍼 크래시 원천 차단 (파라미터 디커플링 파이프라인 100% 개통)
 # ==========================================================
 import logging
 import pandas as pd
@@ -79,7 +80,9 @@ class InfiniteStrategy:
         except Exception as e:
             return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
 
-    def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, vwap_status=None):
+    # 🚨 [V28.51 팩트 교정] TypeError 방어막: 스케줄러가 던지는 is_snapshot_mode 파라미터를 
+    # 무결하게 수신하여 하위 엔진으로 패스하도록 시그니처 대수술 완료.
+    def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, vwap_status=None, is_snapshot_mode=False):
         version = self.cfg.get_version(ticker)
         
         if version in ["V13", "V17", "V_VWAP", "V_AVWAP"]:
@@ -92,7 +95,8 @@ class InfiniteStrategy:
             return self.v14_vwap_plugin.get_plan(
                 ticker=ticker, current_price=current_price, avg_price=avg_price, qty=qty,
                 prev_close=prev_close, ma_5day=ma_5day, market_type=market_type,
-                available_cash=available_cash, is_simulation=is_simulation
+                available_cash=available_cash, is_simulation=is_simulation,
+                is_snapshot_mode=is_snapshot_mode
             )
 
         if version == "V_REV":
@@ -134,7 +138,10 @@ class InfiniteStrategy:
     def fetch_avwap_macro(self, base_ticker):
         return self.v_avwap_plugin.fetch_macro_context(base_ticker)
 
-    def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est):
+    # 🚨 [V28.51 팩트 교정] AVWAP 스나이퍼 크래시 쉴드: 조기퇴근 모드의 
+    # early_exit_mode 및 early_target_profit 인젝션 100% 개통 완료.
+    def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est, early_exit_mode=False, early_target_profit=0.025):
         return self.v_avwap_plugin.get_decision(
-            base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est
+            base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est,
+            early_exit_mode=early_exit_mode, early_target_profit=early_target_profit
         )

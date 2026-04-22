@@ -1,5 +1,5 @@
 # ==========================================================
-# [scheduler_trade.py] - 🌟 100% 통합 무결점 완성본 (V28.50) 🌟
+# [scheduler_trade.py] - 🌟 100% 통합 무결점 완성본 (V28.51) 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # MODIFIED: [V28.18] V14 오리지널 스냅샷 저장 배선 개통
 # NEW: [V28.21] 스냅샷 소각 맹점 적출 및 디커플링 무결성 확보
@@ -9,6 +9,7 @@
 # 🛡️ [V28.37] 스윕 피니셔 발화 후 '잔고 증발' 오발탄 원천 차단: sweep_msg_sent 플래그 교차 참조 바이패스 가드 이식 (sniper_monitor + vwap_trade 2중 수술)
 # MODIFIED: [V28.41] U_CURVE_WEIGHTS 배열 합산 불일치(0.9596)로 인한 예산 누수 버그 완벽 수술 (합산 1.0 멱등성 동기화)
 # 🚨 [V28.50 NEW] AVWAP 조기퇴근 모드(Early Exit) 파이프라인 배선 개통 및 타겟 수익률 팩트 캐스팅
+# 🚨 [V28.51 팩트 수술] 정규장 스케줄러 통신 지연(가짜 에러) 진단망 이식: 재시도 루프 시 첫 실패 사유(fail_reason 및 예외 타입)를 텔레그램으로 즉시 타전하여 원격 진단 100% 개통.
 # ==========================================================
 import os
 import logging
@@ -991,6 +992,7 @@ async def scheduled_regular_trade(context):
 
             return True, "SUCCESS"
 
+    # 🚨 [V28.51 팩트 수술] 정규장 스케줄러 재시도 루프 진단망 이식 완료
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             success, fail_reason = await asyncio.wait_for(_do_regular_trade(), timeout=300.0)
@@ -1000,9 +1002,23 @@ async def scheduled_regular_trade(context):
                 return 
         except Exception as e:
             logging.error(f"정규장 전송 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
+            if attempt == 1:
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 재시도합니다! 🛡️\n<code>사유: {type(e).__name__}: {e}</code>", 
+                    parse_mode='HTML'
+                )
+        else:
+            logging.warning(f"정규장 조건 미충족 ({attempt}/{MAX_RETRIES}): {fail_reason}")
+            if attempt == 1:
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 재시도합니다! 🛡️\n<code>사유: {fail_reason}</code>", 
+                    parse_mode='HTML'
+                )
 
         if attempt < MAX_RETRIES:
-            if attempt == 1 or attempt % 5 == 0:
+            if attempt != 1 and attempt % 5 == 0:
                 await context.bot.send_message(chat_id=chat_id, text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 재시도합니다! 🛡️", parse_mode='HTML')
             await asyncio.sleep(RETRY_DELAY)
 
