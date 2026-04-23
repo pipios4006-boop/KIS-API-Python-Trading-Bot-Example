@@ -12,6 +12,7 @@
 # 콜드 스타트 폭풍 제어(first=30) 및 통합 타임존(America/New_York) 파이프라인 구축
 # 🚨 [V27.12 핫픽스] 사계절 타임존 이중 타격 원천 차단, 이중 동기화 붕괴 방지 및 FD 최적화 이식
 # MODIFIED: [V28.27 그랜드 수술] 로그 파일명 생성 시 KST(서버 시간) 의존성 전면 소각 및 EST(미국 동부) 타임존 락온으로 디버깅 파편화 영구 차단
+# MODIFIED: [V30.00 그랜드 리팩토링] 비대해진 scheduler_trade.py를 4개의 정예 코어(sniper, vwap, regular, aftermarket)로 100% 분할 및 의존성 주입 완료.
 # ==========================================================
 
 import os
@@ -41,13 +42,12 @@ from scheduler_core import (
     get_target_hour,
     perform_self_cleaning
 )
-from scheduler_trade import (
-    scheduled_regular_trade,
-    scheduled_sniper_monitor,
-    scheduled_vwap_trade,
-    scheduled_vwap_init_and_cancel,  
-    scheduled_after_market_lottery  
-)
+
+# 🚨 [V30.00 수술] 분할된 4대 전투 사령부 코어 독립 임포트
+from scheduler_sniper import scheduled_sniper_monitor
+from scheduler_vwap import scheduled_vwap_trade, scheduled_vwap_init_and_cancel
+from scheduler_regular import scheduled_regular_trade
+from scheduler_aftermarket import scheduled_after_market_lottery
 
 TICKER_BASE_MAP = {
     "SOXL": "SOXX",
