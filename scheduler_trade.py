@@ -1,5 +1,5 @@
 # ==========================================================
-# [scheduler_trade.py] - 🌟 100% 통합 전투 사령부 (V29.08) 🌟
+# [scheduler_trade.py] - 🌟 100% 통합 전투 사령부 (V29.09) 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # 🚨 [V27.13 그랜드 수술] 코파일럿 합작 5대 엣지 케이스 완벽 수술 완료
 # 🚀 [V28.01 그랜드 수술] 서머타임 데드락 방어 윈도우 65분 확장, 결측치 락온 차단, tx_lock 런타임 붕괴 가드 완비
@@ -16,6 +16,7 @@
 # 🚨 [V28.51 팩트 수술] 정규장 스케줄러 통신 지연(가짜 에러) 진단망 이식: 재시도 루프 시 첫 실패 사유(fail_reason 및 예외 타입)를 텔레그램으로 즉시 타전하여 원격 진단 100% 개통.
 # 🚨 [V29.03 팩트 수술] AVWAP 영속성(Persistence) 듀얼 캐시 동기화 이식 완료: GCP 서버 재부팅(Amnesia) 시 json 파일에서 과거 상태를 자가 복구(Self-Healing)하고 팩트 매매를 즉시 재개하는 파이프라인 완벽 개통.
 # MODIFIED: [V29.08 핫픽스] AVWAP 암살자 런타임 라우팅 누수(AttributeError) 팩트 교정 완료
+# MODIFIED: [V29.09 핫픽스] 0주 새출발 예방적 LOC 덫 타점 역배선(Swap) 팩트 교정 완료
 # ==========================================================
 import logging
 import datetime
@@ -172,8 +173,8 @@ async def scheduled_sniper_monitor(context):
                     # MODIFIED: [V29.08] 플러그인 캡슐화 라우팅 누수 팩트 교정
                     decision = strategy.v_avwap_plugin.get_decision(
                         ticker=t,
-                        base_df=base_candles,
-                        target_df=target_candles,
+                        base_df=df_1min_base,
+                        target_df=None,
                         context_data=ctx_data,
                         current_qty=avwap_qty,
                         cfg=cfg,
@@ -899,8 +900,9 @@ async def scheduled_regular_trade(context):
                             if fallback_target >= 0.01:
                                 loc_orders.append({'side': 'SELL', 'qty': safe_qty, 'price': fallback_target, 'type': 'LOC', 'desc': '[Fallback 전량]'})
                         
-                        b1_price = round(prev_c * 0.999 if v_rev_q_qty == 0 else prev_c * 0.995, 2)
-                        b2_price = round(prev_c / 0.935 if v_rev_q_qty == 0 else prev_c * 0.9725, 2)
+                        # MODIFIED: [V29.09 수술] 0주 새출발 예방적 LOC 덫 타점 역배선(Swap) 팩트 교정
+                        b1_price = round(prev_c / 0.935 if v_rev_q_qty == 0 else prev_c * 0.995, 2)
+                        b2_price = round(prev_c * 0.999 if v_rev_q_qty == 0 else prev_c * 0.9725, 2)
                         
                         b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                         b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0

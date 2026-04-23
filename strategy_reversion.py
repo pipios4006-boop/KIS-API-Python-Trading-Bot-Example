@@ -1,5 +1,5 @@
 # ==========================================================
-# [strategy_reversion.py] - 🌟 V29.07 0주 새출발 90% 스킵 무결점 수술본 🌟
+# [strategy_reversion.py] - 🌟 V29.09 0주 새출발 팩트 교정 완결본 🌟
 # ⚠️ V-REV 하이브리드 엔진 전용 수학적 타격 모듈
 # 💡 5년 백테스트 기반 VWAP 유동성 정밀 가중치(U_CURVE_WEIGHTS) 적용 완료
 # 💡 [V24.16 팩트 동기화] 0주 새출발 디커플링 타점 (Buy1: 0.999, Buy2: /0.935) 원본 유지
@@ -26,6 +26,7 @@
 # MODIFIED: [V28.44] 0주 새출발 Buy1 상한제 완전 철거 (50% 예산 20주 무조건 매수 락온 및 타점 붕괴 영구 방어)
 # 🚨 [V29.06 팩트 증명] 한투 평단가 하방 오염 100% 영구 차단 검증. 본 엔진은 외부 평단가(actual_avg) 개입을 일절 불허하며 오직 큐(q_data) 기반 순수 역산 평단가만 사용함이 검증됨.
 # MODIFIED: [V29.07] 0주 새출발 VWAP 타점 붕괴 및 호가 스프레드(Ask) 스킵 맹점 100% 영구 차단 (스냅샷 앵커 복원)
+# MODIFIED: [V29.09] 0주 새출발 시각적 디커플링 차단 (스냅샷 강제 덮어쓰기) 및 0주 타점 역배선(Swap) 팩트 교정 수술 완료
 # ==========================================================
 import math
 import os
@@ -44,7 +45,6 @@ class ReversionStrategy:
         self.state_loaded = {}
         self.was_holding = {}
         
-        # MODIFIED: [V28.42] 가중치 배열 합산 1.0 멱등성 동기화 완결
         self.U_CURVE_WEIGHTS = [
             0.0308, 0.0220, 0.0190, 0.0228, 0.0179, 0.0191, 0.0199, 0.0190, 0.0187, 0.0213,
             0.0216, 0.0234, 0.0231, 0.0210, 0.0205, 0.0252, 0.0225, 0.0228, 0.0238, 0.0229,
@@ -208,28 +208,46 @@ class ReversionStrategy:
         cached_plan = self.load_daily_snapshot(ticker)
         is_zero_start_session = (cached_plan and cached_plan.get("total_q", -1) == 0)
 
+        # 🚨 MODIFIED: [V29.09 수술] 0주 팩트 스캔 시 낡은 스냅샷 디커플링 락온
         if not is_snapshot_mode and min_idx < 0:
             if cached_plan:
-                buy_orders = [o for o in cached_plan.get("orders", []) if o.get("side") == "BUY"]
-                sell_orders = []
-                
-                rem_qty_total = max(0, int(total_q) - int(self.executed.get("SELL_QTY", {}).get(ticker, 0)))
-                if rem_qty_total > 0:
-                    sell_orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot})
+                if total_q == 0:
+                    # 팩트 실잔고가 0주인데 스냅샷이 유령 매수/매도 지시를 들고 있다면 100% 무시하고 동적 덮어쓰기
+                    p1_trigger_fact = round(prev_c / 0.935, 2)
+                    p2_trigger_fact = round(prev_c * 0.999, 2)
+                    b1_budget = alloc_cash * 0.5
+                    b2_budget = alloc_cash - b1_budget
                     
-                    available_l1 = min(l1_qty, rem_qty_total)
-                    l1_queued = 0
-                    if available_l1 > 0:
-                        sell_orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
-                        l1_queued = available_l1
+                    q1 = math.floor(b1_budget / p1_trigger_fact) if p1_trigger_fact > 0 else 0
+                    q2 = math.floor(b2_budget / p2_trigger_fact) if p2_trigger_fact > 0 else 0
+                    
+                    new_buy_orders = []
+                    if q1 > 0: new_buy_orders.append({"side": "BUY", "qty": q1, "price": p1_trigger_fact})
+                    if q2 > 0: new_buy_orders.append({"side": "BUY", "qty": q2, "price": p2_trigger_fact})
+                    
+                    cached_plan["orders"] = new_buy_orders
+                    cached_plan["total_q"] = 0
+                else:
+                    buy_orders = [o for o in cached_plan.get("orders", []) if o.get("side") == "BUY"]
+                    sell_orders = []
+                    
+                    rem_qty_total = max(0, int(total_q) - int(self.executed.get("SELL_QTY", {}).get(ticker, 0)))
+                    if rem_qty_total > 0:
+                        sell_orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot})
                         
-                    available_upper = min(upper_qty, rem_qty_total - l1_queued)
-                    if available_upper > 0:
-                        sell_orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper})
-                
-                cached_plan["orders"] = buy_orders + sell_orders
-                cached_plan["snapshot_total_q"] = cached_plan.get("total_q", 0) 
-                cached_plan["total_q"] = total_q
+                        available_l1 = min(l1_qty, rem_qty_total)
+                        l1_queued = 0
+                        if available_l1 > 0:
+                            sell_orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
+                            l1_queued = available_l1
+                            
+                        available_upper = min(upper_qty, rem_qty_total - l1_queued)
+                        if available_upper > 0:
+                            sell_orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper})
+                    
+                    cached_plan["orders"] = buy_orders + sell_orders
+                    cached_plan["snapshot_total_q"] = cached_plan.get("total_q", 0) 
+                    cached_plan["total_q"] = total_q
                 return cached_plan
 
         if min_idx < 0 or min_idx >= 30:
@@ -238,6 +256,7 @@ class ReversionStrategy:
 
         if is_zero_start_session or total_q == 0:
             side = "BUY"
+            # 🚨 MODIFIED: [V29.09 수술] 0주 새출발 타점 역배선 팩트 교정
             p1_trigger = round(prev_c / 0.935, 2)
             p2_trigger = round(prev_c * 0.999, 2)
         else:
@@ -308,11 +327,9 @@ class ReversionStrategy:
                 
             return plan_result
 
-        # VWAP 런타임(타임 슬라이싱) 가동 페이즈
         rem_weight = sum(self.U_CURVE_WEIGHTS[min_idx:])
         slice_ratio_sell = current_weight / rem_weight if rem_weight > 0 else 1.0
         
-        # MODIFIED: [V28.42] 가중치 멱등성 확보 (총합 1.0 기준 분배)
         total_weight = sum(self.U_CURVE_WEIGHTS)
         slice_ratio_buy = current_weight / total_weight if total_weight > 0 else 1.0
 
@@ -321,14 +338,9 @@ class ReversionStrategy:
             if total_spent >= alloc_cash:
                 return {"orders": [], "trigger_loc": False, "total_q": total_q}
             
-            # 🛡️ MODIFIED: [V28.43] 0주 새출발 예산 50/50 완벽 격리 (팩트 체크)
             b1_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
             b2_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
 
-            # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-            # V14 무매 원칙상 고점 불타기를 막기 위해, 장 마감 직전이라도 별값 상한선을 초과하면 
-            # 잔여 예산을 강제 배포하지 않고 소각하는 것이 100% 정상 작동임. 우회 매수 피니셔 절대 추가 금지.
-            # 🛡️ MODIFIED: [V29.07] Buy1: 0주 새출발 세션 시 조건 완전 해제 (무조건 진입) 및 호가 스프레드(Ask) 통과 락온
             if curr_p > 0 and (is_zero_start_session or curr_p <= p1_trigger):
                 exact_q1 = (b1_budget_slice / curr_p) + float(self.residual["BUY1"].get(ticker, 0.0))
                 alloc_q1 = int(math.floor(exact_q1))
@@ -339,7 +351,6 @@ class ReversionStrategy:
                     # 절대 p1_trigger(스냅샷 앵커)를 훼손하거나 curr_p로 롤백하지 말 것.
                     orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger})
                     
-            # 🛡️ MODIFIED: [V28.44] Buy2: 엄격한 상한선 방어 유지 (조건부 진입) -> 비싸면 0주 매수 락온
             if curr_p > 0 and curr_p <= p2_trigger:
                 exact_q2 = (b2_budget_slice / curr_p) + float(self.residual["BUY2"].get(ticker, 0.0))
                 alloc_q2 = int(math.floor(exact_q2))
@@ -377,3 +388,4 @@ class ReversionStrategy:
 
         self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False, "total_q": total_q}
+
