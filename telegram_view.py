@@ -34,7 +34,8 @@
 # 🚨 [V29.01 MODIFIED] GIF 화질 저하 팩트 진단: 애니메이션 병합 로직 100% 소각 및 background.png 기반 무손실 고화질(Quality 100) PNG 렌더링 엔진 원상 복구 완료
 # 🚨 [V29.07 UX 팩트 패치] AVWAP 암살자 제어 콘솔 진입 버튼 텍스트 통일화 (직관성 강화)
 # MODIFIED: [V29.09] 0주 팩트 스캔 시 낡은 스냅샷의 렌더링 디커플링 누수를 원천 차단하는 동적 오버라이드(Overwrite) 락온 이식
-# NEW: [V29.10 스냅샷 디커플링 UX 팩트 패치] 시각적 인지 오판 방어막 하드코딩 완료
+# MODIFIED: [V29.10] 스냅샷 디커플링 시각적 인지 오판 방어막 텍스트 이식
+# MODIFIED: [V29.11] 🚨 프리마켓 진입 이후 스냅샷 텍스트 오표출 맹점 원천 차단 (조건부 은폐 로직 이식)
 # ==========================================================
 import os
 import math
@@ -451,9 +452,10 @@ class TelegramView:
                 raw_guidance = raw_guidance.rstrip('\n')
                 body_msg += raw_guidance + "\n"
 
-                # NEW: [V29.10 스냅샷 디커플링 UX 팩트 패치] 시각적 인지 오판 방어막 하드코딩
-                body_msg += "\n <i>※ 현재 표출된 계획은 전일 17:05 기준 박제된 스냅샷이며,</i>\n"
-                body_msg += " <i>금일 17:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n"
+                # NEW: [V29.11 스냅샷 디커플링 UX 팩트 패치] 프리마켓/정규장 진입 시 오표출 방어
+                if not is_trade_active:
+                    body_msg += "\n <i>※ 현재 표출된 계획은 전일 17:05 기준 박제된 스냅샷이며,</i>\n"
+                    body_msg += " <i>금일 17:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n"
 
                 if t_info.get('avwap_active', False):
                     avwap_qty = t_info.get('avwap_qty', 0)
@@ -510,9 +512,10 @@ class TelegramView:
                 else:
                     body_msg += " 💤 주문 없음 (관망/예산소진)\n"
                 
-                # NEW: [V29.10 스냅샷 디커플링 UX 팩트 패치] 시각적 인지 오판 방어막 하드코딩
-                body_msg += "\n <i>※ 현재 표출된 계획은 전일 17:05 기준 박제된 스냅샷이며,</i>\n"
-                body_msg += " <i>금일 17:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n"
+                # NEW: [V29.11 스냅샷 디커플링 UX 팩트 패치] 프리마켓/정규장 진입 시 오표출 방어
+                if not is_trade_active:
+                    body_msg += "\n <i>※ 현재 표출된 계획은 전일 17:05 기준 박제된 스냅샷이며,</i>\n"
+                    body_msg += " <i>금일 17:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n"
                 
             body_msg += "\n"
 
