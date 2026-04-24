@@ -1,19 +1,16 @@
 # ==========================================================
 # [telegram_sync_engine.py] - 🌟 100% 통합 완성본 🌟 (Part 1)
-# MODIFIED: [V28.10 장부 환각 엣지 케이스 수술] 실잔고와 큐 장부 수량이 일치할 경우
-# 비파괴 보정(CALIB) 호출을 원천 차단하는 멱등성 락온(Idempotency Lock-on) 방어막 이식.
+# MODIFIED: [V28.10 장부 환각 엣지 케이스 수술] 실잔고와 큐 장부 수량이 일치할 경우 비파괴 보정 원천 차단.
 # MODIFIED: [V28.21 동기화 엇박자 그랜드 수술] 졸업 판별 전 매도 원장 우선 기록으로 수익률 -100% 버그 차단.
-# MODIFIED: [V28.23 타임존 락온 그랜드 수술] EST(미국 동부) 기준으로 100% 형변환하여 타임 패러독스 소각.
-# MODIFIED: [V28.28 tx_lock 영구 교착 차단] 야후 파이낸스 10초 타임아웃 래핑.
 # MODIFIED: [V30.08 애프터마켓 기억상실 방어] 체결 원장 지연(Lag) 대기 및 8초 다중 교차 검증 엔진 이식. 
-# MODIFIED: [V30.10 애프터마켓 졸업 MIA 방어] 결측치(None) Safe Casting 적용 및 스냅샷 타입 충돌 락온.
-# MODIFIED: [V30.11 수동매수 누락 방어] 미동기화 0주 졸업 시 가상 지층 편입 멱등성 보정.
-# MODIFIED: [V30.12 유니버설 장부 동기화 & LIFO 큐 딥 캘리브레이션] 정규장 수동 매수 시 메인 장부와 큐의 
-# 오차를 발생시키는 락온(if != "V_REV") 구조 전면 수술. 메인 장부(config.json) 업데이트를 모든 모드에 
-# 개방(Universal Sync)하고, 큐 편입 시 전체 평균 단가 오염을 막기 위해 한계 단가(Marginal Price) 정밀 
-# 역산 및 다이렉트 파일 I/O 방식의 독립 지층(Layer) 강제 편입 락온 적용 완료.
-# NEW: [V30.13 수동매수 익절 증발 방어] 0주 졸업 시 MANUAL_SYNC 지층의 원자적 파일 I/O 강제 락온, 
-# 체결 원장 안정화 대기 루프 교차 검증(False Break 차단), 단가 이중 합산 방어용 한계 단가 역산 엔진 이식.
+# MODIFIED: [V30.12 유니버설 장부 동기화 & LIFO 큐 딥 캘리브레이션] 메인 장부 업데이트 개방 및 큐 다이렉트 편입.
+# MODIFIED: [V30.13 수동매수 익절 증발 방어] 0주 졸업 시 MANUAL_SYNC 지층의 원자적 파일 I/O 강제 락온.
+# NEW: [V30.15 제로섬 바이패스 & KST 자정 맹점 그랜드 수술] 
+# 1) 당일 매수 후 애프터마켓 전량 익절 시 실잔고 오차가 0(Zero-Sum)이 되어 메인 장부 기입이 
+# 증발하는 맹점 수술 (needs_reconstruction 엔진 이식).
+# 2) KST 자정을 넘긴 애프터마켓 매도 원장이 단일 날짜 조회 시 누락되는 '데이터 기아' 방어. 
+# 과거 4일치 광역 스캔 후 ord_dt/ord_tmd를 EST 타임존으로 정밀 형변환하여 당일 체결분만 핀셋 필터링(filter_to_est).
+# 3) 큐 장부가 0이라도 당일 매도(sold_today)가 존재하면 0주 졸업 엔진 강제 격발 및 스냅샷 충돌 방어.
 # ==========================================================
 import logging
 import datetime
@@ -23,6 +20,7 @@ import os
 import asyncio
 import json
 import tempfile
+import traceback
 import yfinance as yf
 import pandas_market_calendars as mcal
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -100,10 +98,8 @@ class TelegramSyncEngine:
                 
                 if not schedule.empty:
                     last_trade_date = schedule.index[-1]
-                    target_kis_str = last_trade_date.strftime('%Y%m%d')
                     target_ledger_str = last_trade_date.strftime('%Y-%m-%d')
                 else:
-                    target_kis_str = now_est.strftime('%Y%m%d')
                     target_ledger_str = now_est.strftime('%Y-%m-%d')
 
                 _, holdings = self.broker.get_account_balance()
@@ -128,19 +124,43 @@ class TelegramSyncEngine:
                 
                 max_check_qty = max(ledger_qty_for_check, vrev_ledger_qty_for_check)
 
+                # NEW: [V30.15 방어] KST 자정 크로스오버 원장 기아 방지를 위한 4일치 광역 조회 및 EST 정밀 핀셋 필터링
+                kis_search_start = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
+                query_end_dt = now_kst.strftime('%Y%m%d')
+
+                def filter_to_est(execs_raw):
+                    filtered = []
+                    if not execs_raw: return filtered
+                    for ex in execs_raw:
+                        ord_dt = ex.get('ord_dt') or ex.get('ord_strt_dt')
+                        if not ord_dt: continue
+                        ord_tmd = ex.get('ord_tmd')
+                        if not ord_tmd or len(str(ord_tmd)) != 6: 
+                            ord_tmd = '000000'
+                        try:
+                            # 1. KST 원장을 timezone-aware datetime으로 파싱
+                            k_dt = kst.localize(datetime.datetime.strptime(f"{ord_dt}{ord_tmd}", "%Y%m%d%H%M%S"))
+                            # 2. 미국 동부 시간(EST/EDT)으로 정밀 변환
+                            e_dt = k_dt.astimezone(est)
+                            # 3. 봇의 논리적 앵커 일자(target_ledger_str)와 일치하는 체결만 핀셋 추출
+                            if e_dt.strftime('%Y-%m-%d') == target_ledger_str:
+                                filtered.append(ex)
+                        except Exception as e:
+                            logging.error(f"🚨 타임존 파싱 에러: {e}")
+                    return filtered
+
+                raw_execs = []
                 target_execs = []
-                # MODIFIED: [V30.13 방어] KIS 체결 지연(Lag) 대기 루프의 조기 탈출(False Break) 맹점 수술.
-                # 단순 과거 장부 기준 수량(max_check_qty) 비교를 철거하고, 
-                # 직전 API 호출 시점과 현재 시점의 실매도량(sold_today)이 일치할 때만 안정화된 것으로 간주하여 루프 탈출.
+                
+                # MODIFIED: [V30.13 방어] KIS 체결 지연 안정화 대기 루프 (False Break 차단)
                 if actual_qty == 0 and max_check_qty > 0:
                     max_retries = 6
                     prev_sold_today = -1
                     stable_cnt = 0
                     for attempt in range(max_retries):
-                        target_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, target_kis_str, target_kis_str)
-                        sold_today = 0
-                        if target_execs:
-                            sold_today = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01")
+                        raw_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, kis_search_start, query_end_dt)
+                        target_execs = filter_to_est(raw_execs)
+                        sold_today = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01")
                         
                         if sold_today >= max_check_qty:
                             if sold_today == prev_sold_today:
@@ -152,10 +172,11 @@ class TelegramSyncEngine:
                         prev_sold_today = sold_today
                         
                         if attempt < max_retries - 1:
-                            logging.info(f"⏳ [{ticker}] 체결 원장 지연(Lag) 감지. 데이터 안정화 및 교차 검증을 위해 대기 중... ({attempt+1}/{max_retries})")
+                            logging.info(f"⏳ [{ticker}] 체결 원장 지연(Lag) 감지. 데이터 안정화 및 EST 매핑 검증 중... ({attempt+1}/{max_retries})")
                             await asyncio.sleep(2.0)
                 else:
-                    target_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, target_kis_str, target_kis_str)
+                    raw_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, kis_search_start, query_end_dt)
+                    target_execs = filter_to_est(raw_execs)
 
                 if target_execs:
                     calibrated_count = self.cfg.calibrate_ledger_prices(ticker, target_ledger_str, target_execs)
@@ -169,16 +190,24 @@ class TelegramSyncEngine:
                 price_diff = abs(actual_avg - avg_price)
 
                 # ==========================================================
-                # [통합 메인 장부 동기화 엔진] - V14 및 V-REV 100% 공통 적용
-                # MODIFIED: [V30.12 방어] 구형 락온(if != "V_REV") 전면 해제로 
-                # V-REV 수동 매수 시에도 KIS 체결 원장 기반 메인 장부가 누락 없이 기록되도록 통폐합.
+                # [통합 메인 장부 동기화 엔진] 
                 # ==========================================================
-                if diff == 0 and price_diff < 0.01:
+                # NEW: [V30.15 방어] 당일 제로섬(Zero-Sum) 거래 시 메인 장부 업데이트 Bypass 원천 차단
+                today_recs = [r for r in recs if r['date'] == target_ledger_str and 'INIT' not in str(r.get('exec_id', '')) and 'CALIB' not in str(r.get('exec_id', ''))]
+                ledger_today_buy = sum(r['qty'] for r in today_recs if r['side'] == 'BUY')
+                ledger_today_sell = sum(r['qty'] for r in today_recs if r['side'] == 'SELL')
+                
+                exec_today_buy = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "02")
+                exec_today_sell = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01")
+                
+                needs_reconstruction = (diff != 0) or (ledger_today_buy != exec_today_buy) or (ledger_today_sell != exec_today_sell)
+
+                if not needs_reconstruction and price_diff < 0.01:
                     pass 
-                elif diff == 0 and price_diff >= 0.01:
+                elif not needs_reconstruction and price_diff >= 0.01:
                     self.cfg.calibrate_avg_price(ticker, actual_avg)
                     await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
-                elif diff != 0:
+                elif needs_reconstruction:
                     temp_recs = [r for r in recs if r['date'] != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
                     temp_qty, temp_avg, _, _ = self.cfg.calculate_holdings(ticker, temp_recs)
                     
@@ -187,7 +216,8 @@ class TelegramSyncEngine:
                     new_target_records = []
                     
                     if target_execs:
-                        target_execs.sort(key=lambda x: x.get('ord_tmd', '000000')) 
+                        # NEW: [V30.15 방어] 절대 시간 정렬 락온 (시간 역행 방어)
+                        target_execs.sort(key=lambda x: str(x.get('ord_dt', '00000000')) + str(x.get('ord_tmd', '000000'))) 
                         for ex in target_execs:
                             side_cd = ex.get('sll_buy_dvsn_cd')
                             exec_qty = int(float(ex.get('ft_ccld_qty') or '0'))
@@ -224,16 +254,21 @@ class TelegramSyncEngine:
                             calib_item['is_reverse'] = True
                         new_target_records.append(calib_item)
                         
+                    # MODIFIED: [V30.15 방어] 0주 회귀 시 평단가 0.0 강제 덮어쓰기로 인한 오염 붕괴 원천 차단
                     if new_target_records:
-                        for r in new_target_records:
-                            r['avg_price'] = actual_avg
+                        if actual_qty > 0:
+                            for r in new_target_records:
+                                r['avg_price'] = actual_avg
                     elif temp_recs: 
-                        temp_recs[-1]['avg_price'] = actual_avg
+                        if actual_qty > 0:
+                            temp_recs[-1]['avg_price'] = actual_avg
                         
                     self.cfg.overwrite_incremental_ledger(ticker, temp_recs, new_target_records)
                     
                     if gap_qty != 0:
                         await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 통합 메인 장부(MAIN LEDGER) 비파괴 보정 완료!</b>\n▫️ KIS 실잔고 오차 수량({gap_qty}주)을 역사 보존 상태로 안전하게 교정했습니다.", parse_mode='HTML')
+                    elif exec_today_buy > 0 or exec_today_sell > 0:
+                        logging.info(f"📜 [{ticker}] 당일 데이트레이딩 체결 원장(제로섬 회귀)이 메인 장부에 완벽히 복원 기입되었습니다.")
 
                 # ==========================================================
                 # V-REV 큐 관리 및 0주 졸업 판별 로직 시작
@@ -242,7 +277,10 @@ class TelegramSyncEngine:
                     q_data_before = self.queue_ledger.get_queue(ticker)
                     vrev_ledger_qty = sum(int(float(item.get("qty") or 0)) for item in q_data_before)
                     
-                    if actual_qty == 0 and vrev_ledger_qty > 0:
+                    # NEW: [V30.15 방어] 큐 장부가 0이더라도 당일 매도 원장이 존재하면 졸업 판별 강제 격발
+                    sold_today_vrev = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if target_execs else 0
+                    
+                    if actual_qty == 0 and (vrev_ledger_qty > 0 or sold_today_vrev > 0):
                         if now_kst.hour < 10:
                             await context.bot.send_message(chat_id, "⏳ <b>증권사 확정 정산(10:00 KST) 대기 중입니다.</b> 가결제 오차 방지를 위해 졸업 카드 발급 및 장부 초기화가 보류됩니다.", parse_mode='HTML')
                             self._sync_escrow_cash(ticker)
@@ -263,17 +301,19 @@ class TelegramSyncEngine:
                                     if tot_q > 0:
                                         actual_clear_price = round(tot_amt / tot_q, 4)
                             
+                            # Fallback: API 타임존 필터링 후 잔여 오차가 생겼을 시 최후 수단으로 raw_execs 스캔
                             if actual_clear_price == 0.0:
-                                search_start_dt = (now_est - datetime.timedelta(days=3)).strftime('%Y%m%d')
-                                past_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, search_start_dt, target_kis_str)
-                                if past_execs:
-                                    sell_execs = [ex for ex in past_execs if ex.get('sll_buy_dvsn_cd') == "01"]
-                                    if sell_execs:
-                                        tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in sell_execs)
-                                        tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in sell_execs)
+                                if raw_execs:
+                                    recent_sells = [ex for ex in raw_execs if ex.get('sll_buy_dvsn_cd') == "01"]
+                                    if recent_sells:
+                                        recent_sells.sort(key=lambda x: f"{x.get('ord_dt', '')}{x.get('ord_tmd', '')}", reverse=True)
+                                        last_sell_dt = recent_sells[0].get('ord_dt')
+                                        same_day_sells = [ex for ex in recent_sells if ex.get('ord_dt') == last_sell_dt]
+                                        tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in same_day_sells)
+                                        tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in same_day_sells)
                                         if tot_q > 0:
                                             actual_clear_price = round(tot_amt / tot_q, 4)
-                                            logging.info(f"🔍 [{ticker}] 과거 3일치 원장 스캔으로 애프터마켓 실제 매도 단가(${actual_clear_price})를 복원했습니다.")
+                                            logging.info(f"🔍 [{ticker}] 과거 4일치 광역 스캔 및 최근일({last_sell_dt}) 추출 폴백으로 매도 단가(${actual_clear_price})를 복원했습니다.")
 
                             if tot_q > vrev_ledger_qty:
                                 missing_qty = tot_q - vrev_ledger_qty
@@ -283,18 +323,16 @@ class TelegramSyncEngine:
                                 temp_avg = temp_invested / vrev_ledger_qty if vrev_ledger_qty > 0 else 0.0
                                 missing_price = temp_avg
                                 
-                                # NEW: [V30.13 방어] 수동 매수 단가 이중 합산 뻥튀기 방어 (한계 단가 역산)
-                                # 전체 매수 금액에서 당일 큐에 기편입된 시스템 자동 매수분 금액을 차감하여 순수 수동 매수분만의 단가 도출.
+                                # MODIFIED: [V30.13 방어] 수동 매수 단가 이중 합산 뻥튀기 방어 (한계 단가 정밀 역산)
                                 if buy_execs:
                                     b_tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in buy_execs)
                                     b_tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in buy_execs)
                                     
                                     if b_tot_q > 0:
-                                        today_str = now_est.strftime('%Y-%m-%d')
                                         q_today_amt = 0.0
                                         q_today_qty = 0
                                         for item in q_data_before:
-                                            if str(item.get("date", "")).startswith(today_str):
+                                            if str(item.get("date", "")).startswith(target_ledger_str):
                                                 iq = int(float(item.get("qty", 0)))
                                                 q_today_qty += iq
                                                 q_today_amt += iq * float(item.get("price", 0))
@@ -316,7 +354,7 @@ class TelegramSyncEngine:
                                 })
                                 vrev_ledger_qty = tot_q
                                 
-                                # NEW: [V30.13 방어] 인메모리 증발 및 스냅샷 엔진 충돌 방지를 위한 원자적 파일 I/O 강제 락온
+                                # NEW: [V30.15 방어] 큐 인메모리 증발 및 스냅샷 캡처 충돌 방지를 위한 원자적 덮어쓰기 락온
                                 q_file = "data/queue_ledger.json"
                                 try:
                                     os.makedirs(os.path.dirname(q_file) if os.path.dirname(q_file) else '.', exist_ok=True)
@@ -333,6 +371,10 @@ class TelegramSyncEngine:
                                     
                                     if hasattr(self.queue_ledger, 'data'):
                                         self.queue_ledger.data = all_q
+                                    if hasattr(self.queue_ledger, 'queues'):
+                                        self.queue_ledger.queues = all_q
+                                    if hasattr(self.queue_ledger, 'load'):
+                                        self.queue_ledger.load()
                                         
                                     logging.info(f"🔧 [{ticker}] 미동기화 수동 매수 물량({missing_qty}주, 진성단가 ${missing_price})을 졸업 큐에 다이렉트 영속화하여 PnL 오차 교정 및 스냅샷 충돌 방어 완료.")
                                 except Exception as e:
@@ -382,7 +424,7 @@ class TelegramSyncEngine:
                                 _vrev_snap_ok = True
                                 
                         except Exception as e:
-                            logging.error(f"🚨 스냅샷 캡처 및 복리 정산 중 치명적 오류 감지: {e}")
+                            logging.error(f"🚨 스냅샷 캡처 및 복리 정산 중 치명적 오류 감지: {e}\n{traceback.format_exc()}")
                             snapshot = None
                             
                         self.queue_ledger.sync_with_broker(ticker, 0)
@@ -441,7 +483,6 @@ class TelegramSyncEngine:
                             if calibrated:
                                 await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 비파괴 보정 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감했습니다.", parse_mode='HTML')
                                 
-                        # MODIFIED: [V30.12 방어] 수동 매수 시 LIFO 큐 전체 평단가 오염 방지를 위해 한계 단가(Marginal Price) 정밀 역산 및 다이렉트 I/O 강제 편입
                         elif actual_qty > 0 and actual_qty > vrev_ledger_qty:
                             gap_qty = actual_qty - vrev_ledger_qty
                             
@@ -455,8 +496,9 @@ class TelegramSyncEngine:
                                         real_buy_price = round(b_tot_amt / b_tot_q, 4)
                                 
                                 if real_buy_price == actual_avg:
-                                    search_start_dt = (now_est - datetime.timedelta(days=3)).strftime('%Y%m%d')
-                                    past_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, search_start_dt, target_kis_str)
+                                    search_start_dt = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
+                                    past_raw = await asyncio.to_thread(self.broker.get_execution_history, ticker, search_start_dt, query_end_dt)
+                                    past_execs = filter_to_est(past_raw)
                                     if past_execs:
                                         p_buy_execs = [ex for ex in past_execs if ex.get('sll_buy_dvsn_cd') == "02"]
                                         if p_buy_execs:
@@ -512,52 +554,53 @@ class TelegramSyncEngine:
                 # V14 0주 졸업 판별 로직 
                 # ==========================================================
                 if not is_rev:
-                    if actual_qty == 0:
-                        if ledger_qty > 0:
-                            if now_kst.hour < 10:
-                                await context.bot.send_message(chat_id, "⏳ <b>증권사 확정 정산(10:00 KST) 대기 중입니다.</b> 가결제 오차 방지를 위해 졸업 카드 발급 및 장부 초기화가 보류됩니다.", parse_mode='HTML')
-                            else:
-                                today_est_str = now_est.strftime('%Y-%m-%d')
+                    # NEW: [V30.15 방어] 장부가 0이라도 당일 매도가 존재하면 V14 데이트레이딩 0주 졸업 강제 격발
+                    sold_today_v14 = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if target_execs else 0
+                    if actual_qty == 0 and (ledger_qty > 0 or sold_today_v14 > 0):
+                        if now_kst.hour < 10:
+                            await context.bot.send_message(chat_id, "⏳ <b>증권사 확정 정산(10:00 KST) 대기 중입니다.</b> 가결제 오차 방지를 위해 졸업 카드 발급 및 장부 초기화가 보류됩니다.", parse_mode='HTML')
+                        else:
+                            today_est_str = now_est.strftime('%Y-%m-%d')
+                            
+                            try:
+                                prev_c = await asyncio.wait_for(
+                                    asyncio.to_thread(self.broker.get_previous_close, ticker),
+                                    timeout=10.0
+                                )
+                            except asyncio.TimeoutError:
+                                prev_c = 0.0
+                                logging.warning(f"⚠️ [{ticker}] 야후 파이낸스 전일 종가 조회 타임아웃 (10초). 0.0으로 대체")
+                            
+                            try:
+                                new_hist, added_seed = self.cfg.archive_graduation(ticker, today_est_str, prev_c)
                                 
-                                try:
-                                    prev_c = await asyncio.wait_for(
-                                        asyncio.to_thread(self.broker.get_previous_close, ticker),
-                                        timeout=10.0
-                                    )
-                                except asyncio.TimeoutError:
-                                    prev_c = 0.0
-                                    logging.warning(f"⚠️ [{ticker}] 야후 파이낸스 전일 종가 조회 타임아웃 (10초). 0.0으로 대체")
-                                
-                                try:
-                                    new_hist, added_seed = self.cfg.archive_graduation(ticker, today_est_str, prev_c)
-                                    
-                                    if new_hist:
-                                        msg = f"🎉 <b>[{ticker} 졸업 확인!]</b>\n장부를 명예의 전당에 저장하고 새 사이클을 준비합니다."
-                                        if added_seed > 0:
-                                            msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
-                                        await context.bot.send_message(chat_id, msg, parse_mode='HTML')
-                                        try:
-                                            img_path = self.view.create_profit_image(
-                                                ticker=ticker, profit=new_hist['profit'], yield_pct=new_hist['yield'],
-                                                invested=new_hist['invested'], revenue=new_hist['revenue'], end_date=new_hist['end_date']
-                                            )
-                                            if img_path and os.path.exists(img_path):
-                                                with open(img_path, 'rb') as f_out:
-                                                    if img_path.lower().endswith('.gif'):
-                                                        await context.bot.send_animation(chat_id=chat_id, animation=f_out)
-                                                    else:
-                                                        await context.bot.send_photo(chat_id=chat_id, photo=f_out)
-                                        except Exception as e:
-                                            logging.error(f"📸 졸업 이미지 발송 실패: {e}")
-                                    else:
-                                        all_recs = [r for r in self.cfg.get_ledger() if r['ticker'] != ticker]
-                                        self.cfg._save_json(self.cfg.FILES["LEDGER"], all_recs)
-                                        await context.bot.send_message(chat_id, f"⚠️ <b>[{ticker} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
-                                except Exception as e:
-                                    logging.error(f"강제 졸업 처리 중 에러: {e}")
+                                if new_hist:
+                                    msg = f"🎉 <b>[{ticker} 졸업 확인!]</b>\n장부를 명예의 전당에 저장하고 새 사이클을 준비합니다."
+                                    if added_seed > 0:
+                                        msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
+                                    await context.bot.send_message(chat_id, msg, parse_mode='HTML')
+                                    try:
+                                        img_path = self.view.create_profit_image(
+                                            ticker=ticker, profit=new_hist['profit'], yield_pct=new_hist['yield'],
+                                            invested=new_hist['invested'], revenue=new_hist['revenue'], end_date=new_hist['end_date']
+                                        )
+                                        if img_path and os.path.exists(img_path):
+                                            with open(img_path, 'rb') as f_out:
+                                                if img_path.lower().endswith('.gif'):
+                                                    await context.bot.send_animation(chat_id=chat_id, animation=f_out)
+                                                else:
+                                                    await context.bot.send_photo(chat_id=chat_id, photo=f_out)
+                                    except Exception as e:
+                                        logging.error(f"📸 졸업 이미지 발송 실패: {e}")
+                                else:
+                                    all_recs = [r for r in self.cfg.get_ledger() if r['ticker'] != ticker]
+                                    self.cfg._save_json(self.cfg.FILES["LEDGER"], all_recs)
+                                    await context.bot.send_message(chat_id, f"⚠️ <b>[{ticker} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
+                            except Exception as e:
+                                logging.error(f"강제 졸업 처리 중 에러: {e}")
 
-                        self._sync_escrow_cash(ticker) 
-                        return "SUCCESS"
+                    self._sync_escrow_cash(ticker) 
+                    return "SUCCESS"
 
                 self._sync_escrow_cash(ticker)
                 return "SUCCESS"
