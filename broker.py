@@ -22,6 +22,7 @@
 # 2) get_account_balance 함수에 tr_cont 헤더 기반의 페이징(Pagination) 로직을 이식하여
 #    20종목 초과 시 발생하는 잔고 스캔 데이터 기아(Data Starvation) 맹점 완벽 교정.
 # 3) 논리적 앵커 통일을 위해 America/New_York을 US/Eastern으로 100% 락온(Lock-on) 형변환.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단 및 타임존 무결성 100% 확보
 # ==========================================================
 
 import requests
@@ -31,7 +32,9 @@ import datetime
 import os
 import math
 import yfinance as yf
-import pytz
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입
+# import pytz
+from zoneinfo import ZoneInfo
 import tempfile
 import shutil  
 import pandas as pd   
@@ -53,7 +56,8 @@ class KoreaInvestmentBroker:
         self._get_access_token()
 
     def _get_access_token(self, force=False):
-        kst = pytz.timezone('Asia/Seoul')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+        kst = ZoneInfo('Asia/Seoul')
         
         if not force and os.path.exists(self.token_file):
             try:
@@ -308,8 +312,8 @@ class KoreaInvestmentBroker:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.droplevel(1)
                 
-            # MODIFIED: [V29.18 타임존 락온 규약 통일] America/New_York을 US/Eastern으로 형변환
-            est = pytz.timezone('US/Eastern')
+            # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo('America/New_York') 이식
+            est = ZoneInfo('America/New_York')
             
             if df.index.tz is None:
                 df.index = df.index.tz_localize('UTC').tz_convert(est)
@@ -418,8 +422,8 @@ class KoreaInvestmentBroker:
             stock = yf.Ticker(ticker)
             hist = stock.history(period="5d", timeout=5)
             if not hist.empty:
-                # MODIFIED: [V29.18 타임존 락온 규약 통일] America/New_York을 US/Eastern으로 형변환
-                est = pytz.timezone('US/Eastern')
+                # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo('America/New_York') 이식
+                est = ZoneInfo('America/New_York')
                 now_est = datetime.datetime.now(est)
                 
                 cutoff_date = now_est.date()
@@ -471,8 +475,8 @@ class KoreaInvestmentBroker:
             if df.empty: return None
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
                 
-            # MODIFIED: [V29.18 타임존 락온 규약 통일] America/New_York을 US/Eastern으로 형변환
-            est = pytz.timezone('US/Eastern')
+            # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo('America/New_York') 이식
+            est = ZoneInfo('America/New_York')
             if df.index.tz is None: df.index = df.index.tz_localize('UTC').tz_convert(est)
             else: df.index = df.index.tz_convert(est)
                 
@@ -738,8 +742,8 @@ class KoreaInvestmentBroker:
         if curr_qty == 0: return [], 0, 0.0
             
         ledger_records = []
-        # MODIFIED: [V29.18 타임존 락온 규약 통일] America/New_York을 US/Eastern으로 형변환
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo('America/New_York') 이식
+        est = ZoneInfo('America/New_York')
         target_date = datetime.datetime.now(est)
         genesis_reached = False
         loop_counter = 0 
@@ -798,8 +802,8 @@ class KoreaInvestmentBroker:
             splits = stock.splits
             if splits is not None and not splits.empty:
                 if last_date_str == "":
-                    # MODIFIED: [V29.18 타임존 락온 규약 통일] America/New_York을 US/Eastern으로 형변환
-                    est = pytz.timezone('US/Eastern')
+                    # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo('America/New_York') 이식
+                    est = ZoneInfo('America/New_York')
                     seven_days_ago = datetime.datetime.now(est) - datetime.timedelta(days=7)
                     safe_last_date = seven_days_ago.strftime('%Y-%m-%d')
                 else: safe_last_date = last_date_str

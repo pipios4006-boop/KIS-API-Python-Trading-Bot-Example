@@ -10,9 +10,12 @@
 # MODIFIED: [V28.25 그랜드 수술] V-REV 메모리 스냅샷에 동적 수수료 팩트 역산 엔진 이식 완료
 # 🚨 [V28.51 팩트 수술] 정규장 스케줄러 TypeError 붕괴 및 AVWAP 스나이퍼 크래시 원천 차단 (파라미터 디커플링 파이프라인 100% 개통)
 # 🚨 [V29.03 팩트 수술] AVWAP 기억상실 방어막: 영속성 캐시(Persistence) 데이터가 스케줄러와 플러그인 사이를 안전하게 오가도록 캡슐화 라우팅 배선 개통 완료.
+# MODIFIED: [V30.09 핫픽스] capture_vrev_snapshot 내 KST 의존성 소각 및 ZoneInfo('America/New_York') 이식
 # ==========================================================
 import logging
 import pandas as pd
+# NEW: [V30.09] 타임존 무결성을 위한 ZoneInfo 도입
+from zoneinfo import ZoneInfo
 from strategy_v14 import V14Strategy
 from strategy_v_avwap import VAvwapHybridPlugin  
 from strategy_reversion import ReversionStrategy
@@ -133,7 +136,8 @@ class InfiniteStrategy:
             "cleared_qty": qty,
             "realized_pnl": realized_pnl,
             "realized_pnl_pct": realized_pnl_pct,
-            "captured_at": pd.Timestamp.now(tz='Asia/Seoul')
+            # MODIFIED: [V30.09 핫픽스] KST 의존성 소각 및 ZoneInfo('America/New_York') 이식
+            "captured_at": pd.Timestamp.now(tz=ZoneInfo('America/New_York'))
         }
 
     # ==========================================================

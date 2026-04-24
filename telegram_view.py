@@ -37,14 +37,16 @@
 # MODIFIED: [V29.11 UX 팩트 패치] 스냅샷 안내 문구 렌더링 디커플링 (프리마켓/정규장 진입 시 자동 은폐 및 장마감 전용 표출)
 # MODIFIED: [V30.00 실시간 레이더 수술] /sync 지시서에 AVWAP 기초자산 팩트(현재가, VWAP, Gap) 시각화 엔진 이식
 # MODIFIED: [V30.08 스케줄러 디커플링 수술] 외부 주입 KST 오판 변수(target_hour) 무시 및 EST 팩트 스캔을 통한 시각적 렌더링 강제 동기화
+# MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식을 통한 타임존 무결성 락온 통일
 # ==========================================================
 import os
 import math
 import logging
-import datetime # NEW: [V30.08 타임존 팩트 스캔용]
-import pytz     # NEW: [V30.08 타임존 팩트 스캔용]
+import datetime 
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입
+from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from PIL import Image, ImageDraw, ImageFont, ImageSequence
+from PIL import Image, ImageDraw, ImageFont
 
 class TelegramView:
     def __init__(self):
@@ -88,8 +90,8 @@ class TelegramView:
                 pass
 
     def get_start_message(self, target_hour, season_icon, latest_version):
-        # MODIFIED: [V30.08 UI 팩트 교정] 외부에서 주입되는 KST 기반 오판 가능성(target_hour)을 전면 무시하고, EST 타임존 팩트 스캔으로 렌더링 디커플링
-        est_tz = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09 핫픽스] pytz 적출 및 ZoneInfo 이식
+        est_tz = ZoneInfo('America/New_York')
         is_dst = bool(datetime.datetime.now(est_tz).dst())
         
         fact_hour = 17 if is_dst else 18
@@ -464,7 +466,6 @@ class TelegramView:
                     avwap_status = t_info.get('avwap_status', '👀 장초반 필터 스캔 대기')
                     avwap_budget = t_info.get('avwap_budget', 0.0)
                     
-                    # MODIFIED: [V30.00 실시간 레이더 시각화 팩트 주입]
                     base_tkr = t_info.get('avwap_base_ticker', 'N/A')
                     base_p = t_info.get('avwap_base_price', 0.0)
                     base_vwap = t_info.get('avwap_base_vwap', 0.0)

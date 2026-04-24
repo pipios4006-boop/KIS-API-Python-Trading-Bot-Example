@@ -31,13 +31,16 @@
 # 당일 0주로 스냅샷이 박제된 세션(is_zero_start=True)에서는 1주가 부분 체결되더라도
 # 정규장(REG) 내의 모든 SELL 지시를 100% 강제 소각하고 오직 애프터마켓(AFTER)에서만 덫을 놓도록
 # get_dynamic_plan 렌더링 파이프라인에 강력한 필터링 방어막 이식.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
 # ==========================================================
 import math
 import os
 import json
 import tempfile
 from datetime import datetime
-import pytz
+# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
+# import pytz
+from zoneinfo import ZoneInfo
 
 class ReversionStrategy:
     def __init__(self):
@@ -56,15 +59,15 @@ class ReversionStrategy:
         ]
 
     def _get_state_file(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         return f"data/vwap_state_REV_{today_str}_{ticker}.json"
 
     def _get_snapshot_file(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         return f"data/daily_snapshot_REV_{today_str}_{ticker}.json"
 
     def _load_state_if_needed(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         if self.state_loaded.get(ticker) == today_str:
             return 
             
@@ -92,7 +95,7 @@ class ReversionStrategy:
         self.state_loaded[ticker] = today_str
 
     def _save_state(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         state_file = self._get_state_file(ticker)
         data = {
             "date": today_str,
@@ -127,7 +130,7 @@ class ReversionStrategy:
         if os.path.exists(snap_file):
             return
             
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         data = {
             "date": today_str,
             "plan": plan_data
@@ -370,9 +373,6 @@ class ReversionStrategy:
                 alloc_q1 = int(math.floor(exact_q1))
                 self.residual["BUY1"][ticker] = float(exact_q1 - alloc_q1)
                 if alloc_q1 > 0:
-                    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-                    # VWAP 0주 새출발 시 타점을 curr_p로 제한하면 매수호가(ask) 스프레드에 의해 90% 이상 주문이 Skip되는 치명적 맹점이 발생함.
-                    # 절대 p1_trigger(스냅샷 앵커)를 훼손하거나 curr_p로 롤백하지 말 것.
                     orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger})
                     
             if curr_p > 0 and curr_p <= p2_trigger:

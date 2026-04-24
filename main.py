@@ -37,13 +37,13 @@ from queue_ledger import QueueLedger
 from strategy_reversion import ReversionStrategy
 from volatility_engine import VolatilityEngine
 
+# MODIFIED: [V30.09] 존재하지 않는 get_target_hour 임포트 영구 소각 (ImportError 원천 차단)
 from scheduler_core import (
     scheduled_token_check,
     scheduled_auto_sync_summer,
     scheduled_auto_sync_winter,
     scheduled_force_reset,
     scheduled_self_cleaning,
-    get_target_hour,
     perform_self_cleaning
 )
 
@@ -144,7 +144,12 @@ async def post_init(application: Application):
     application.bot_data['bot_controller'].tx_lock = tx_lock
 
 def main():
-    TARGET_HOUR, season_msg = get_target_hour()
+    # MODIFIED: [V30.09] KST 의존성 함수(get_target_hour) 소각 및 EST 팩트 기반 서머타임 실시간 판별 락온
+    est_zone = ZoneInfo('America/New_York')
+    now_est = datetime.datetime.now(est_zone)
+    is_dst = bool(now_est.dst())
+    season_msg = "☀️ 서머타임 (EDT) 적용 중" if is_dst else "❄️ 표준시간 (EST) 적용 중"
+    
     cfg = ConfigManager()
     latest_version = cfg.get_latest_version() 
     
@@ -222,8 +227,8 @@ def main():
     
     # NEW: [V30.08 스케줄러 디커플링 수술] KST TARGET_HOUR 의존성 전면 소각 및 EST 팩트 기반 서머타임 실시간 판별 이식
     est_now = datetime.datetime.now(est)
-    is_dst = bool(est_now.dst())
-    SYNC_FUNC = scheduled_auto_sync_summer if is_dst else scheduled_auto_sync_winter
+    is_dst_job = bool(est_now.dst())
+    SYNC_FUNC = scheduled_auto_sync_summer if is_dst_job else scheduled_auto_sync_winter
     # MODIFIED: [V30.09 핫픽스] LMT 버그 제거를 위해 tzinfo=zi_kst 교체 주입
     jq.run_daily(SYNC_FUNC, time=datetime.time(10, 0, 5, tzinfo=zi_kst), days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
     

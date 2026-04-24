@@ -29,10 +29,12 @@
 # 🚨 [V30.06 NEW] 장중 업데이트 레드존(Update Red-Zone) 원천 차단:
 # VWAP 타임 슬라이싱 및 장마감 정산의 무결성을 위해 EST 14:55 ~ 16:10 사이의
 # /update 명령어를 시스템적으로 차단하고 팩트 메시지를 타전하도록 수술 완료.
+# MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식을 통한 타임존 오차 차단. cmd_record 비동기 블로킹 방어막 탑재 완료.
 # ==========================================================
 import logging
 import datetime
-import pytz
+# MODIFIED: [V30.09] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입
+from zoneinfo import ZoneInfo
 import time
 import os
 import math 
@@ -77,7 +79,8 @@ class TelegramController:
         return update.effective_chat.id == int(self.admin_id)
 
     def _get_dst_info(self):
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         now_est = datetime.datetime.now(est)
         is_dst = now_est.dst() != datetime.timedelta(0)
         
@@ -87,7 +90,8 @@ class TelegramController:
             return (18, "❄️ <b>서머타임 해제 (Winter)</b>")
 
     def _get_market_status(self):
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         now = datetime.datetime.now(est)
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=now.date(), end_date=now.date())
@@ -379,7 +383,8 @@ class TelegramController:
         except (IndexError, AttributeError):
             tracking_cache = {}
 
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         now_est = datetime.datetime.now(est)
         
         is_sniper_active_time = False
@@ -570,7 +575,7 @@ class TelegramController:
                 if is_manual_vwap:
                     v_rev_guidance += "\n\n🚨 <b>[ ⛔ 치명적 경고: 수동 VWAP 설정 ]</b> 🚨\n"
                     v_rev_guidance += "한투 앱(V앱)에서 수동 주문을 거실 때, <b>절대로 '하루 종일'로 설정하지 마십시오!</b>\n"
-                    v_rev_guidance += "작동 시간은 반드시 \n<b>[장 마감 30분 전 ~ 장 마감]</b>\n으로만 세팅하셔야 합니다.\n"
+                    v_rev_guidance += "작동 시간은 반드시 \n<b>[장 마감 30분 전 ~ 장 마감]</b>\n으로만 세팅하셔야 창출됩니다.\n"
                     v_rev_guidance += "장중 내내 작동하게 둘 경우 V-REV 코어 전략의 수익률이 심각하게 파괴됩니다."
 
                 if hasattr(self.cfg, 'get_avwap_hybrid_mode') and self.cfg.get_avwap_hybrid_mode(t):
@@ -613,11 +618,10 @@ class TelegramController:
                         except Exception as e:
                             logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
 
-                    # 🚨 [V30.04/V30.05 팩트 교정] 타임라인 동적 오버라이드 및 시간 표기 제거
                     if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                         curr_time = now_est.time()
                         time_1000 = datetime.time(10, 0)
-                        time_1500 = datetime.time(15, 0) # [V30.05] 15:00 EST 연장
+                        time_1500 = datetime.time(15, 0)
                         
                         if curr_time < time_1000:
                             avwap_status_txt = "⏳ 금일 감시 대기"
@@ -685,7 +689,8 @@ class TelegramController:
         
         if success_tickers: 
             async with self.tx_lock:
-                _, holdings = self.broker.get_account_balance()
+                # MODIFIED: [V30.09] 이벤트 루프 교착 방어를 위한 비동기 래핑
+                _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
             await self.sync_engine._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
         else:
             await status_msg.edit_text("✅ <b>동기화 완료</b> (표시할 진행 중인 장부가 없거나 에러 대기 중입니다)", parse_mode='HTML')
@@ -820,7 +825,8 @@ class TelegramController:
         
         status_msg = await update.message.reply_text("⏳ <b>실시간 시장 지표(HV/VXN) 연산 중...</b>", parse_mode='HTML')
         
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         now_est = datetime.datetime.now(est)
 
         for t in active_tickers:

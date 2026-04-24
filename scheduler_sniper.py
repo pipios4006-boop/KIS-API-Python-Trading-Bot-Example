@@ -6,10 +6,13 @@
 # 🚨 [V30.07 NEW] 0주 새출발 정규장 매도 영구 동결 락온:
 # 당일 스냅샷이 0주 새출발(is_zero_start_fact)로 박제된 종목은
 # 상방 스나이퍼(Upper Sniper)의 매도(익절) 레이더를 장중 내내 100% 강제 셧다운(Bypass)함.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단
 # ==========================================================
 import logging
 import datetime
-import pytz
+# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
+# import pytz
+from zoneinfo import ZoneInfo
 import asyncio
 import traceback
 import math
@@ -31,7 +34,8 @@ from scheduler_core import is_market_open
 async def scheduled_sniper_monitor(context):
     if not is_market_open(): return
     
-    est = pytz.timezone('US/Eastern')
+    # MODIFIED: [LMT 오차를 원천 차단하기 위해 pytz 대신 ZoneInfo('America/New_York') 락온]
+    est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
     
     if context.job.data.get('tx_lock') is None:

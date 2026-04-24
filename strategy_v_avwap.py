@@ -14,10 +14,13 @@
 # MODIFIED: [V29.13 핫픽스] 데이터 기아(Data Starvation) 방어막 이식 및 다형성 맵핑 2차 강화
 # NEW: [UI 패치] 텔레그램 /sync 실시간 레이더 렌더링을 위한 팩트 데이터(gap_pct) 반환 패키징
 # 🚨 [V30.05 팩트 수술] AVWAP 암살자 모니터링 타임라인 1시간 연장 (14:00 -> 15:00 EST) 및 조건문 교정 완비.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
 # ==========================================================
 import logging
 import datetime
-import pytz
+# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
+# import pytz
+from zoneinfo import ZoneInfo
 import math
 import yfinance as yf
 import pandas as pd
@@ -74,11 +77,11 @@ class VAvwapHybridPlugin:
             df_daily = tkr.history(period="2mo", interval="1d", timeout=5)
             df_30m = tkr.history(period="60d", interval="30m", timeout=5)
 
-            today_est = datetime.datetime.now(pytz.timezone('US/Eastern')).date()
+            today_est = datetime.datetime.now(ZoneInfo('America/New_York')).date()
             if df_daily.index.tz is None:
-                df_daily.index = df_daily.index.tz_localize('UTC').tz_convert('US/Eastern')
+                df_daily.index = df_daily.index.tz_localize('UTC').tz_convert('America/New_York')
             else:
-                df_daily.index = df_daily.index.tz_convert('US/Eastern')
+                df_daily.index = df_daily.index.tz_convert('America/New_York')
 
             df_past = df_daily[df_daily.index.date < today_est]
 
@@ -92,9 +95,9 @@ class VAvwapHybridPlugin:
                 return None
 
             if df_30m.index.tz is None:
-                df_30m.index = df_30m.index.tz_localize('UTC').tz_convert('US/Eastern')
+                df_30m.index = df_30m.index.tz_localize('UTC').tz_convert('America/New_York')
             else:
-                df_30m.index = df_30m.index.tz_convert('US/Eastern')
+                df_30m.index = df_30m.index.tz_convert('America/New_York')
 
             first_30m = df_30m[df_30m.index.time == datetime.time(9, 30)]
             past_first_30m = first_30m[first_30m.index.date < today_est]
@@ -128,7 +131,7 @@ class VAvwapHybridPlugin:
         avwap_alloc_cash = avwap_alloc_cash if avwap_alloc_cash > 0 else kwargs.get('alloc_cash', kwargs.get('avwap_alloc_cash', 0.0))
         
         if now_est is None:
-            now_est = datetime.datetime.now(pytz.timezone('US/Eastern'))
+            now_est = datetime.datetime.now(ZoneInfo('America/New_York'))
             
         if base_curr_p <= 0.0 and df_1min_base is not None and not df_1min_base.empty:
             try: base_curr_p = float(df_1min_base['close'].iloc[-1])

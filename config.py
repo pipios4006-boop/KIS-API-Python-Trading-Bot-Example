@@ -15,11 +15,14 @@
 # 타임 패러독스로 인한 스냅샷 매핑 실패 버그를 영구 소각 완료. (EC-3 방어)
 # 🚨 [V28.50 NEW] 사용자 맞춤형 AVWAP 암살자 조기 퇴근 설정(Early Exit/Target) 저장소 완비
 # MODIFIED: [V29.16 핫픽스] 마스터 스위치 및 스나이퍼 락온(Buy/Sell) 영속성 Getter/Setter 팩트 이식 완료
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단 및 타임존 무결성 100% 확보
 # ==========================================================
 import json
 import os
 import datetime
-import pytz
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입
+# import pytz
+from zoneinfo import ZoneInfo
 import math
 import time
 import shutil
@@ -248,7 +251,8 @@ class ConfigManager:
         self._atomic_update_locks(_update)
 
     def set_lock(self, ticker, market_type):
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est).strftime('%Y-%m-%d')
         def _update(locks):
             locks[f"{today}_{ticker}_{market_type}"] = True
@@ -263,7 +267,8 @@ class ConfigManager:
         self._atomic_update_locks(_update)
         
     def reset_lock_for_ticker(self, ticker):
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est).strftime('%Y-%m-%d')
         def _update(locks):
             keys_to_delete = [k for k in locks.keys() if k.startswith(f"{today}_{ticker}")]
@@ -272,7 +277,8 @@ class ConfigManager:
         self._atomic_update_locks(_update)
 
     def check_lock(self, ticker, market_type):
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est).strftime('%Y-%m-%d')
         locks = self._load_json(self.FILES["LOCKS"], {})
         return locks.get(f"{today}_{ticker}_{market_type}", False)
@@ -362,7 +368,8 @@ class ConfigManager:
             print(f"⚠️ [보안 차단] {ticker}의 장부 기록이 이미 존재하여 파괴적 INIT 덮어쓰기를 차단했습니다.")
             return
             
-        est = pytz.timezone('US/Eastern')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
         new_id = 1 if not ledger else max(r.get('id', 0) for r in ledger) + 1
         
@@ -480,7 +487,8 @@ class ConfigManager:
 
     def set_reverse_state(self, ticker, is_active, day_count, exit_target=0.0, last_update_date=None):
         if last_update_date is None:
-            est = pytz.timezone('US/Eastern')
+            # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+            est = ZoneInfo('America/New_York')
             last_update_date = datetime.datetime.now(est).strftime('%Y-%m-%d')
             
         d = self._load_json(self.FILES["REVERSE_CFG"], {})
@@ -493,7 +501,8 @@ class ConfigManager:
     def increment_reverse_day(self, ticker):
         state = self.get_reverse_state(ticker)
         if state.get("is_active"):
-            est = pytz.timezone('US/Eastern')
+            # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+            est = ZoneInfo('America/New_York')
             now_est = datetime.datetime.now(est)
             today_est_str = now_est.strftime('%Y-%m-%d')
             

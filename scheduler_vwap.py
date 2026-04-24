@@ -3,10 +3,13 @@
 # ⚠️ 단일 책임 원칙(SRP) 적용: 장 마감 전 VWAP 전담 코어
 # 💡 [역할] Fail-Safe (선제적 LOC 취소) 및 VWAP 1분 단위 타임 슬라이싱
 # 🚨 기존 scheduler_trade.py에서 100% 비파괴적으로 분리 독립 완료
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단, 이벤트 루프 교착 방지 원자적 쓰기 탑재
 # ==========================================================
 import logging
 import datetime
-import pytz
+# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
+# import pytz
+from zoneinfo import ZoneInfo
 import asyncio
 import traceback
 import math
@@ -14,6 +17,8 @@ import os
 import time
 import json
 import pandas_market_calendars as mcal
+# NEW: [원자적 쓰기(Atomic Write)를 위한 tempfile 모듈 추가]
+import tempfile
 
 # 🚨 공통 유틸리티 코어 참조
 from scheduler_core import is_market_open
@@ -24,7 +29,8 @@ from scheduler_core import is_market_open
 async def scheduled_vwap_init_and_cancel(context):
     if not is_market_open(): return
     
-    est = pytz.timezone('US/Eastern')
+    # MODIFIED: [LMT 오차를 원천 차단하기 위해 pytz 대신 ZoneInfo('America/New_York') 락온]
+    est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
     
     try:
@@ -87,7 +93,8 @@ async def scheduled_vwap_init_and_cancel(context):
 async def scheduled_vwap_trade(context):
     if not is_market_open(): return
     
-    est = pytz.timezone('US/Eastern')
+    # MODIFIED: [LMT 오차를 원천 차단하기 위해 pytz 대신 ZoneInfo('America/New_York') 락온]
+    est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
     
     if context.job.data.get('tx_lock') is None:
@@ -305,8 +312,15 @@ async def scheduled_vwap_trade(context):
                                                             "exec_price": exec_price,
                                                             "total_q": total_q
                                                         }
-                                                        with open(pending_file, 'w', encoding='utf-8') as _pf:
-                                                            json.dump(pending_data, _pf)
+                                                        # NEW: [이벤트 루프 교착(Deadlock) 방지 및 원자적 쓰기(Atomic Write) 방어막 구축]
+                                                        def _save_pending_grad(f_path, p_data):
+                                                            os.makedirs("data", exist_ok=True)
+                                                            fd, tmp_path = tempfile.mkstemp(dir="data", text=True)
+                                                            with os.fdopen(fd, 'w', encoding='utf-8') as _pf:
+                                                                json.dump(p_data, _pf)
+                                                            os.replace(tmp_path, f_path)
+                                                            
+                                                        await asyncio.to_thread(_save_pending_grad, pending_file, pending_data)
                                                     except Exception as pg_e:
                                                         logging.error(f"🚨 [{t}] pending_grad 마커 파일 저장 실패: {pg_e}")
                                     else:

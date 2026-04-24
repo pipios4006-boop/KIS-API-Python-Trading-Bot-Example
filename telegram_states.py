@@ -8,11 +8,14 @@
 # 사용자가 텔레그램 창에 입력한 수수료(%)를 파싱하여 config에 저장하는 CONF_FEE 상태 처리 로직 완벽 이식.
 # NEW: [V28.31] 텔레그램 하단 고정 키보드 텍스트 라우팅 복구 (코파일럿 방식 채택)
 # 🚨 [V29.00 NEW] 암살자 조기 퇴근 목표 수익률(AVWAP_TARGET) 텍스트 입력/저장 라우터 개통
+# MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo('America/New_York') 이식으로 타임존 무결성 달성
 # ==========================================================
 # NEW: [리팩토링 2단계] 유저 텍스트 입력 및 상태 기계(State Machine) 독립 클래스 분리
 import logging
 import datetime
-import pytz
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입
+# import pytz
+from zoneinfo import ZoneInfo
 import os
 import json
 import asyncio
@@ -196,7 +199,8 @@ class TelegramStates:
                 ticker = parts[2]
                 self.cfg.apply_stock_split(ticker, val)
                 
-                est = pytz.timezone('US/Eastern')
+                # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                est = ZoneInfo('America/New_York')
                 today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
                 self.cfg.set_last_split_date(ticker, today_str)
                 

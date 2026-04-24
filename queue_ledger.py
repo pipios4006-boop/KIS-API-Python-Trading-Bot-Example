@@ -6,6 +6,7 @@
 # 🚨 [V27.02 핫픽스] CALIB_ADD (보정 추가) 시 평단가 $0.00 붕괴 버그 원천 차단
 # 🚨 [V27.14 그랜드 수술] 코파일럿 합작 - Atomic Write(장부 증발 방어), Thread Lock(동시접근 덮어쓰기 차단), 유령 로트(0주) 무한루프 소각, EST 타임존 병합 통일 및 백업 자가 치유(Self-Healing) 파이프라인 완벽 구축
 # 🚨 [V27.15 핫픽스] 초기화 Torn Write 방어, add_lot $0.00 주입 차단, pop_lots 미달 차감 감사 추적 및 sync_with_broker 런타임 붕괴 방어막 이식
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
 # ==========================================================
 import os
 import json
@@ -13,7 +14,9 @@ import time
 import math
 import threading
 import shutil
-import pytz
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입
+# import pytz
+from zoneinfo import ZoneInfo
 from datetime import datetime
 import logging
 
@@ -35,8 +38,8 @@ class QueueLedger:
                     self._save_unsafe({})
 
     def _get_trading_date_str(self):
-        # 🚨 [수술 완료] 로트 병합 기준을 KST가 아닌 EST(미국 동부 시간)로 통일
-        est = pytz.timezone('America/New_York')
+        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+        est = ZoneInfo('America/New_York')
         return datetime.now(est).strftime("%Y-%m-%d")
 
     def _load_unsafe(self):
@@ -136,12 +139,14 @@ class QueueLedger:
                 
                 q[-1]["qty"] = new_qty
                 q[-1]["price"] = round(new_price, 4)
-                q[-1]["date"] = datetime.now(pytz.timezone('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+                # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                q[-1]["date"] = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
             else:
                 q.append({
                     "qty": qty,
                     "price": price_f, # MODIFIED: 검증 완료된 price_f 적용
-                    "date": datetime.now(pytz.timezone('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
+                    # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                    "date": datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
                     "type": lot_type
                 })
                 
@@ -227,12 +232,14 @@ class QueueLedger:
                     
                     q[-1]["qty"] = new_qty
                     q[-1]["price"] = round(new_price, 4)
-                    q[-1]["date"] = datetime.now(pytz.timezone('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+                    # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                    q[-1]["date"] = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     q.append({
                         "qty": diff,
                         "price": round(calib_price, 4), 
-                        "date": datetime.now(pytz.timezone('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
+                        # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                        "date": datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
                         "type": "CALIB_ADD"
                     })
             else:

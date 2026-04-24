@@ -21,6 +21,7 @@
 # 🚨 [V30.07 NEW] 0주 새출발 당일 매도 영구 동결 락온 이식:
 # 0주로 스냅샷이 박제된 세션(is_zero_start_fact=True)에서는
 # 정규장(market_type="REG") 내 모든 SELL 주문을 100% 강제 소각하고 홀딩을 강제함.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
 # ==========================================================
 import math
 import logging
@@ -28,7 +29,9 @@ import os
 import json
 import tempfile
 from datetime import datetime
-import pytz
+# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
+# import pytz
+from zoneinfo import ZoneInfo
 
 class V14VwapStrategy:
     def __init__(self, config):
@@ -44,15 +47,15 @@ class V14VwapStrategy:
         ]
 
     def _get_state_file(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         return f"data/vwap_state_V14_{today_str}_{ticker}.json"
 
     def _get_snapshot_file(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         return f"data/daily_snapshot_V14VWAP_{today_str}_{ticker}.json"
 
     def _load_state_if_needed(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         if self.state_loaded.get(ticker) == today_str:
             return 
             
@@ -78,7 +81,7 @@ class V14VwapStrategy:
         self.state_loaded[ticker] = today_str
 
     def _save_state(self, ticker):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         state_file = self._get_state_file(ticker)
         data = {
             "date": today_str,
@@ -106,7 +109,7 @@ class V14VwapStrategy:
                 except OSError: pass
 
     def save_daily_snapshot(self, ticker, plan_data):
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
         snap_file = self._get_snapshot_file(ticker)
         
         # NEW: [스냅샷 중복 덮어쓰기 원천 차단 멱등성 가드 이식]

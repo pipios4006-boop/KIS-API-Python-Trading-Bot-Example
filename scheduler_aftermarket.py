@@ -1,12 +1,14 @@
 # ==========================================================
-# [scheduler_aftermarket.py] - 🌟 100% 분할 캡슐화 완성본 (V30.00) 🌟
+# [scheduler_aftermarket.py] - 🌟 100% 분할 캡슐화 완성본 (V30.09) 🌟
 # ⚠️ 단일 책임 원칙(SRP) 적용: 애프터마켓 로터리 덫 전담 코어
 # 💡 [역할] 16:05 EST (05:05 KST) 잔여 물량 3% 익절 장후 지정가 전송
 # 🚨 기존 scheduler_trade.py에서 100% 비파괴적으로 분리 독립 완료
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 파이프라인 이식으로 시스템 규격 통일
 # ==========================================================
 import logging
 import datetime
-import pytz
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입 완료 (잔재 100% 소각)
+from zoneinfo import ZoneInfo
 import asyncio
 import traceback
 import math

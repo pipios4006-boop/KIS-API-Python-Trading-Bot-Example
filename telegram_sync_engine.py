@@ -11,10 +11,12 @@
 # 2) KST 자정을 넘긴 애프터마켓 매도 원장이 단일 날짜 조회 시 누락되는 '데이터 기아' 방어. 
 # 과거 4일치 광역 스캔 후 ord_dt/ord_tmd를 EST 타임존으로 정밀 형변환하여 당일 체결분만 핀셋 필터링(filter_to_est).
 # 3) 큐 장부가 0이라도 당일 매도(sold_today)가 존재하면 0주 졸업 엔진 강제 격발 및 스냅샷 충돌 방어.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단 및 타임존 락온 100% 달성.
 # ==========================================================
 import logging
 import datetime
-import pytz
+# MODIFIED: [V30.09 핫픽스] LMT 오차 방어를 위해 pytz 적출 및 ZoneInfo 도입
+from zoneinfo import ZoneInfo
 import time
 import os
 import asyncio
@@ -88,10 +90,12 @@ class TelegramSyncEngine:
                     split_type = "액면분할" if split_ratio > 1.0 else "액면병합(역분할)"
                     await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
                 
-                kst = pytz.timezone('Asia/Seoul')
+                # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                kst = ZoneInfo('Asia/Seoul')
                 now_kst = datetime.datetime.now(kst)
                 
-                est = pytz.timezone('US/Eastern')
+                # MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식
+                est = ZoneInfo('America/New_York')
                 now_est = datetime.datetime.now(est)
                 nyse = mcal.get_calendar('NYSE')
                 schedule = nyse.schedule(start_date=(now_est - datetime.timedelta(days=10)).date(), end_date=now_est.date())
@@ -138,8 +142,9 @@ class TelegramSyncEngine:
                         if not ord_tmd or len(str(ord_tmd)) != 6: 
                             ord_tmd = '000000'
                         try:
+                            # MODIFIED: [V30.09 핫픽스] ZoneInfo 규격에 맞춰 localize() 대신 replace(tzinfo=...) 적용
                             # 1. KST 원장을 timezone-aware datetime으로 파싱
-                            k_dt = kst.localize(datetime.datetime.strptime(f"{ord_dt}{ord_tmd}", "%Y%m%d%H%M%S"))
+                            k_dt = datetime.datetime.strptime(f"{ord_dt}{ord_tmd}", "%Y%m%d%H%M%S").replace(tzinfo=kst)
                             # 2. 미국 동부 시간(EST/EDT)으로 정밀 변환
                             e_dt = k_dt.astimezone(est)
                             # 3. 봇의 논리적 앵커 일자(target_ledger_str)와 일치하는 체결만 핀셋 추출
