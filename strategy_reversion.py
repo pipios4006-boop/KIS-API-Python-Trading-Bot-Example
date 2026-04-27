@@ -32,12 +32,13 @@
 # 정규장(REG) 내의 모든 SELL 지시를 100% 강제 소각하고 오직 애프터마켓(AFTER)에서만 덫을 놓도록
 # get_dynamic_plan 렌더링 파이프라인에 강력한 필터링 방어막 이식.
 # MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
+# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 논리적 거래일 시프트 엔진 이식
 # ==========================================================
 import math
 import os
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 # MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
 # import pytz
 from zoneinfo import ZoneInfo
@@ -58,16 +59,27 @@ class ReversionStrategy:
             0.0259, 0.0284, 0.0331, 0.0385, 0.0400, 0.0461, 0.0553, 0.0620, 0.0750, 0.1584
         ]
 
+    # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+    # 04:05 EST 통합 스케줄러 기상 전까지는 논리적 거래일을 전날(T-1)로 강제 락온
+    def _get_logical_date_str(self):
+        now_est = datetime.now(ZoneInfo('America/New_York'))
+        if now_est.time() < datetime.time(4, 5):
+            target_date = now_est - timedelta(days=1)
+        else:
+            target_date = now_est
+        return target_date.strftime("%Y-%m-%d")
+
     def _get_state_file(self, ticker):
-        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
+        today_str = self._get_logical_date_str()
         return f"data/vwap_state_REV_{today_str}_{ticker}.json"
 
     def _get_snapshot_file(self, ticker):
-        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
+        today_str = self._get_logical_date_str()
         return f"data/daily_snapshot_REV_{today_str}_{ticker}.json"
 
     def _load_state_if_needed(self, ticker):
-        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
+        today_str = self._get_logical_date_str()
         if self.state_loaded.get(ticker) == today_str:
             return 
             
@@ -95,7 +107,7 @@ class ReversionStrategy:
         self.state_loaded[ticker] = today_str
 
     def _save_state(self, ticker):
-        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
+        today_str = self._get_logical_date_str()
         state_file = self._get_state_file(ticker)
         data = {
             "date": today_str,
@@ -130,7 +142,7 @@ class ReversionStrategy:
         if os.path.exists(snap_file):
             return
             
-        today_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d")
+        today_str = self._get_logical_date_str()
         data = {
             "date": today_str,
             "plan": plan_data
@@ -416,3 +428,4 @@ class ReversionStrategy:
 
         self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False, "total_q": total_q}
+

@@ -10,13 +10,17 @@
 # MODIFIED: [V28.26 타임 패러독스 완벽 방어 수술]
 # 서버 시간(KST/UTC) 의존성 100% 소각. 모든 스냅샷 및 쿼터 익절 캐싱 날짜를 
 # 미국 동부시간(US/Eastern)으로 락온하여 자정 경계 환각 및 더블샷 버그 원천 차단.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
+# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 논리적 거래일 시프트 엔진 이식
 # ==========================================================
 import math
 import os
 import json
 import tempfile
-from datetime import datetime
-import pytz  # NEW: [V28.26] 타임존 고정을 위한 라이브러리 추가
+from datetime import datetime, timedelta
+# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
+# import pytz
+from zoneinfo import ZoneInfo
 
 class V14Strategy:
     def __init__(self, config):
@@ -25,10 +29,19 @@ class V14Strategy:
     def _ceil(self, val): return math.ceil(val * 100) / 100.0
     def _floor(self, val): return math.floor(val * 100) / 100.0
 
+    # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
+    def _get_logical_date_str(self):
+        now_est = datetime.now(ZoneInfo('America/New_York'))
+        if now_est.time() < datetime.time(4, 5):
+            target_date = now_est - timedelta(days=1)
+        else:
+            target_date = now_est
+        return target_date.strftime("%Y-%m-%d")
+
     # NEW: [V28.17 스냅샷 엔진 이식] V14 오리지널 모드 스냅샷 저장(Lock-on) 로직
     def save_daily_snapshot(self, ticker, plan_data):
-        # MODIFIED: [V28.26] KST/UTC 의존성 제거 및 EST/EDT 락온
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        # MODIFIED: KST/UTC 의존성 제거 및 EST/EDT 논리적 날짜 락온
+        today_str = self._get_logical_date_str()
         snap_file = f"data/daily_snapshot_V14_{ticker}.json"
         
         # 🚨 [치명적 경고 1 준수] 세션 간 오염 방지: 당일 날짜로 단 1회만 멱등성 박제
@@ -60,8 +73,8 @@ class V14Strategy:
 
     # NEW: [V28.17 스냅샷 엔진 이식] V14 오리지널 모드 스냅샷 로드(Decoupling) 로직
     def load_daily_snapshot(self, ticker):
-        # MODIFIED: [V28.26] KST/UTC 의존성 제거 및 EST/EDT 락온
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        # MODIFIED: KST/UTC 의존성 제거 및 EST/EDT 논리적 날짜 락온
+        today_str = self._get_logical_date_str()
         snap_file = f"data/daily_snapshot_V14_{ticker}.json"
         if os.path.exists(snap_file):
             try:
@@ -75,8 +88,8 @@ class V14Strategy:
 
     def _mark_quarter_sell_completed(self, ticker):
         flag_file = f"cache_sniper_sell_{ticker}.json"
-        # MODIFIED: [V28.26] KST/UTC 의존성 제거 및 EST/EDT 락온
-        today_str = datetime.now(pytz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+        # MODIFIED: KST/UTC 의존성 제거 및 EST/EDT 논리적 날짜 락온
+        today_str = self._get_logical_date_str()
         
         if os.path.exists(flag_file):
             try:

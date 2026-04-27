@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [V31.50 그랜드 수술] 20MA 방어막 영구 소각 및 '전일 정규장 VWAP' 산출 엔진 탑재 완료.
 # 🚨 MODIFIED: [V32.00 백테스트 팩트 락온] 동적 파라미터 전면 소각. Gap < 0 시 무조건 스윕 및 +2.0% 고정 익절 하드코딩.
 # 🚨 MODIFIED: [V32.00 방어막] 2차 손절망(재진입) 환각을 영구 차단하는 13계명 백신 주석 이식 완료.
+# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 논리적 거래일 시프트 엔진 이식
 # ==========================================================
 import logging
 import datetime
@@ -25,8 +26,17 @@ class VAvwapHybridPlugin:
         self.base_stop_loss_pct = 0.02  # 레버리지 3배 환산 시 -6.0% 하드스탑 고정
         self.base_target_pct = 0.02     # 🚨 [프롬프트 락온] 레버리지 3배 환산 시 +2.0% 고정 익절 (백테스트 동기화)
         
+    # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+    def _get_logical_date_str(self, now_est):
+        if now_est.time() < datetime.time(4, 5):
+            target_date = now_est - datetime.timedelta(days=1)
+        else:
+            target_date = now_est
+        return target_date.strftime('%Y%m%d')
+
     def _get_state_file(self, ticker, now_est):
-        today_str = now_est.strftime('%Y%m%d')
+        today_str = self._get_logical_date_str(now_est)
         return f"data/avwap_state_{today_str}_{ticker}.json"
 
     def load_state(self, ticker, now_est):
@@ -66,7 +76,13 @@ class VAvwapHybridPlugin:
             prev_close = 0.0
             
             est = ZoneInfo('America/New_York')
-            today_est = datetime.datetime.now(est).date()
+            now_est = datetime.datetime.now(est)
+            
+            # MODIFIED: [타임 패러독스 방어] 04:05 EST 이전은 전날로 간주
+            if now_est.time() < datetime.time(4, 5):
+                today_est = (now_est - datetime.timedelta(days=1)).date()
+            else:
+                today_est = now_est.date()
 
             if not df_1m.empty:
                 if df_1m.index.tz is None:
