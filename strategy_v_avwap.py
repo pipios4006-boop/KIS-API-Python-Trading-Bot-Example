@@ -1,14 +1,14 @@
 # ==========================================================
 # [strategy_v_avwap.py]
 # 💡 V-REV 하이브리드 전용 차세대 AVWAP 스나이퍼 플러그인 (Dual-Referencing)
-# ⚠️ 초공격형 당일 청산 암살자 (V-REV 잉여 현금 100% 몰빵 & -6% 하드스탑)
+# ⚠️ 초공격형 당일 청산 암살자 (V-REV 잉여 현금 100% 몰빵 & -8% 하드스탑)
 # 🚨 [V29.03 팩트 수술] 기억상실(Amnesia) 엣지 케이스 방어막 (Persistence 엔진 탑재)
 # 🚨 [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식
 # 🚨 MODIFIED: [V31.50 그랜드 수술] 20MA 방어막 영구 소각 및 '전일 정규장 VWAP' 산출 엔진 탑재 완료.
-# 🚨 MODIFIED: [V32.00 백테스트 팩트 락온] 동적 파라미터 전면 소각. Gap < 0 시 무조건 스윕 및 +2.0% 고정 익절 하드코딩.
+# 🚨 MODIFIED: [V32.00 백테스트 팩트 락온] 동적 파라미터 전면 소각. +4.0% 고정 익절 및 -8.0% 하드스탑 하드코딩 완료.
 # 🚨 MODIFIED: [V32.00 방어막] 2차 손절망(재진입) 환각을 영구 차단하는 13계명 백신 주석 이식 완료.
 # 🚨 MODIFIED: [V41.XX 파격적 수술] 0% 쿨다운, 갭 타격, 손절 셧다운 전면 폐기 & 무제한 VWAP 모멘텀 돌파 엔진 이식.
-# 🚨 MODIFIED: [V42.00 핫픽스] 듀얼 모멘텀(Long/Short) 부등호 오염 원천 차단. 5분 평균 > 당일 실시간 = 상승(롱) 로직 팩트 교정 완료.
+# 🚨 MODIFIED: [V42.12 그랜드 핫픽스] 부등호 논리 완벽 원상 복구! (당일 > 5분평균 = 상승 롱 / 당일 < 5분평균 = 하락 숏)
 # ==========================================================
 import logging
 import datetime
@@ -24,8 +24,9 @@ class VAvwapHybridPlugin:
     def __init__(self):
         self.plugin_name = "AVWAP_HYBRID_DUAL"
         self.leverage = 3.0             
-        self.base_stop_loss_pct = 0.02  # 레버리지 3배 환산 시 -6.0% 하드스탑 고정
-        self.base_target_pct = 0.02     # 레버리지 3배 환산 시 +2.0% 고정 익절
+        # 🚨 [팩트 락온] 백테스트 챔피언 파라미터 (Option B) 하드코딩
+        self.base_stop_loss_pct = 0.08 / 3.0  # 레버리지 3배 환산 시 -8.0% 하드스탑 고정
+        self.base_target_pct = 0.04           # +4.0% 고정 익절
         
     def _get_logical_date_str(self, now_est):
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
@@ -46,6 +47,7 @@ class VAvwapHybridPlugin:
                     return json.load(f)
             except Exception:
                 pass
+        # NEW: [V41.XX] 0% 리셋 플래그 소각, shutdown 초기값 False 유지
         return {"executed_buy": False, "shutdown": False, "strikes": 0}
 
     def save_state(self, ticker, now_est, state_data):
@@ -107,6 +109,7 @@ class VAvwapHybridPlugin:
                         else:
                             prev_vwap = prev_close
 
+            # MODIFIED: [V41.XX] RVOL 스파이크 차단 팩트는 소각되었으나 기존 아키텍처 보존을 위해 연산은 유지
             df_30m = tkr.history(period="60d", interval="30m", timeout=5)
             avg_vol_20 = 0.0
 
@@ -159,6 +162,7 @@ class VAvwapHybridPlugin:
         
         curr_time = now_est.time()
         
+        # NEW: [V41.XX] 모멘텀 무제한 타격 스캔 윈도우 락온
         time_1020 = datetime.time(10, 20)
         time_1500 = datetime.time(15, 0)
         time_1555 = datetime.time(15, 55)
@@ -167,6 +171,7 @@ class VAvwapHybridPlugin:
         vwap_success = False 
         avg_vwap_5m = base_curr_p
         
+        # 🚨 [V40.XX 옴니 매트릭스] 인버스(Inverse) 종목 여부 판독
         is_inverse = exec_ticker.upper() in ["SOXS", "SQQQ", "SPXU"]
         
         if df_1min_base is not None and not df_1min_base.empty:
@@ -181,6 +186,7 @@ class VAvwapHybridPlugin:
                     base_vwap = df['vol_tp'].sum() / cum_vol
                     vwap_success = True
                 
+                # NEW: [V41.XX] 당일 실시간 5분 평균 VWAP 연산 파이프라인
                 if len(df) >= 5:
                     recent_5 = df.tail(5)
                     sum_vol_5 = recent_5['vol'].sum()
@@ -193,6 +199,7 @@ class VAvwapHybridPlugin:
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 1분봉 VWAP/5MA 연산 실패: {e}")
 
+        # NEW: [V41.XX] 낡은 rolling_tp 및 gap_pct 렌더링을 5분 VWAP 평균(avg_vwap_5m)으로 완전 대체
         def _build_res(action, reason, qty=0, target_price=0.0):
             return {
                 'action': action,
@@ -220,18 +227,22 @@ class VAvwapHybridPlugin:
                 logging.error("🚨 [V_AVWAP] safe_avg <= 0: 가격 데이터 결측, 하드스탑 강제 집행")
                 return _build_res('SELL', 'CORRUPT_PRICE_HARD_STOP', qty=safe_qty, target_price=0.0)
                 
+            # 익절 및 손절 연산은 계좌 실제 수익률을 추적하므로 SOXL/SOXS 구분 없이 팩트 기반 공통 연산
             exec_return = (exec_curr_p - safe_avg) / safe_avg
             base_equivalent_return = exec_return / self.leverage
             
             if base_equivalent_return <= -self.base_stop_loss_pct:
-                reason = f'HARD_STOP_손절(-6.0%)_즉각재진입가능'
+                # 🚨 [팩트 락온] -8.0% 하드스탑
+                reason = f'HARD_STOP_손절(-8.0%)_즉각재진입가능'
                 return _build_res('SELL', reason, qty=safe_qty, target_price=0.0)
             
             if exec_return >= self.base_target_pct:
-                reason = f'MULTI_STRIKE_TAKE(+2.0%)'
+                # 🚨 [팩트 락온] +4.0% 고정 익절
+                reason = f'MULTI_STRIKE_TAKE(+4.0%)'
                 return _build_res('SELL', reason, qty=safe_qty, target_price=0.0)
 
             if curr_time >= time_1555:
+                # NEW: [V41.XX] 15:55 타임스탑 강제 청산 시에만 익일 오버나이트 갭하락 방어를 위해 셧다운 락온
                 avwap_state["shutdown"] = True
                 self.save_state(exec_ticker, now_est, avwap_state)
                 return _build_res('SELL', 'TIME_STOP_오버나이트동결', qty=safe_qty, target_price=0.0)
@@ -255,13 +266,11 @@ class VAvwapHybridPlugin:
 
         prev_vwap = context_data.get('prev_vwap', 0.0)
 
-        # 🚨 [V42.00 핫픽스] 인버스/롱 양방향 거울 엔진 적용 (모멘텀 돌파 부등호 팩트 교정)
+        # 🚨 [V42.12 핫픽스] 부등호 완벽 원상 복구! (당일 > 5분평균 = 상승 롱 / 당일 < 5분평균 = 하락 숏)
         if not is_inverse:
-            # SOXL 롱 타점: 당일 VWAP > 전일 VWAP AND 5분 평균 VWAP > 당일 VWAP
-            trigger_condition = (base_vwap > prev_vwap) and (avg_vwap_5m > base_vwap)
+            trigger_condition = (base_vwap > prev_vwap) and (base_vwap > avg_vwap_5m)
         else:
-            # SOXS 인버스 숏 타점: 당일 VWAP < 전일 VWAP AND 5분 평균 VWAP < 당일 VWAP
-            trigger_condition = (base_vwap < prev_vwap) and (avg_vwap_5m < base_vwap)
+            trigger_condition = (base_vwap < prev_vwap) and (base_vwap < avg_vwap_5m)
 
         if trigger_condition:
             if exec_curr_p > 0 and avwap_alloc_cash > 0:

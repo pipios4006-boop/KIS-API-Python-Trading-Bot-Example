@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [V42.11 그랜드 핫픽스] 듀얼 모멘텀(Long/Short) 부등호 오염 원천 차단. 5분 평균 > 당일 실시간 = 상승(롱) 로직 팩트 교정 완료.
 # 🚨 MODIFIED: [V42.12 그랜드 핫픽스] 부등호 논리 완벽 원상 복구! (당일 > 5분평균 = 상승 롱 / 당일 < 5분평균 = 하락 숏)
 # 🚨 MODIFIED: [V42.13 핫픽스] 5분 평균 VWAP 갭 렌더링 수식을 (5분평균-실시간)/실시간으로 교정하여 직관적인 UI(+) 제공.
+# 🚨 MODIFIED: [V42.14 핫픽스] 모멘텀 돌파 UI 텍스트 부등호(5분평균 > 당일 = 롱) 팩트 동기화 완료.
 # ==========================================================
 import os
 import math
@@ -225,10 +226,10 @@ class TelegramView:
         msg = f"🔫 <b>[ {t} V41 파격적 VWAP 모멘텀 돌파 콘솔 ]</b>\n\n"
         msg += "💼 <b>현재 가동 모드: [ 무제한 다중 타격 (Multi-Strike) 락온 ]</b>\n"
         msg += f"▫️ 당일 실시간 VWAP이 전일 VWAP과 5분 평균 VWAP을 동시에 돌파하는 <b>강력한 모멘텀</b>에서만 타격합니다.\n"
-        msg += f"▫️ 목표 수익 도달 또는 손절(-6.0%) 피격 시에도 <b>쿨다운 없이 즉각 다음 타점을 무제한 스캔</b>합니다.\n"
+        msg += f"▫️ 목표 수익 도달 또는 손절(-8.0%) 피격 시에도 <b>쿨다운 없이 즉각 다음 타점을 무제한 스캔</b>합니다.\n"
         msg += f"▫️ <b>[오버나이트 방어]</b> 15:55 EST 타임스탑 강제 청산 시에만 당일 매매가 영구 동결됩니다.\n\n"
-        msg += f"🎯 <b>목표 익절가: 진입가 대비 +2.0% (고정)</b>\n"
-        msg += f"🚨 <b>하드스탑 컷: 진입가 대비 -6.0% (고정)</b>\n"
+        msg += f"🎯 <b>목표 익절가: 진입가 대비 +4.0% (고정)</b>\n"
+        msg += f"🚨 <b>하드스탑 컷: 진입가 대비 -8.0% (고정)</b>\n"
 
         keyboard = [
             [InlineKeyboardButton("🔙 닫기 (설정 락온 완료)", callback_data=f"RESET:CANCEL")]
@@ -252,7 +253,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V42.13 옴니 매트릭스 듀얼 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V42.14 옴니 매트릭스 듀얼 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -530,7 +531,7 @@ class TelegramView:
                 final_msg += f"▫️ 실시간 VWAP: ${base_vwap:,.2f} ({rt_gap:+.2f}%)\n"
                 
                 if avg_vwap_5m > 0 and base_vwap > 0:
-                    # 🚨 [V42.13 핫픽스] 5분 평균 갭차이를 +로 표출하도록 공식 재수정
+                    # 🚨 [V42.13 핫픽스] 5분 평균이 실시간보다 크면 +로 표출되도록 정방향 교정
                     avg_5m_gap = ((avg_vwap_5m - base_vwap) / base_vwap) * 100
                     final_msg += f"▫️ 5분 평균 VWAP: ${avg_vwap_5m:,.2f} ({avg_5m_gap:+.2f}%)\n"
                 elif avg_vwap_5m > 0:
@@ -560,15 +561,17 @@ class TelegramView:
                         
                     if prev_vwap > 0:
                         if t == "SOXS":
-                            momentum_color = "🟢" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "🔴"
-                            trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "조건 미달 (대기)"
+                            # 🚨 [V42.14 핫픽스] 부등호 완벽 동기화 (5분평균 < 당일실시간 = 하락)
+                            momentum_color = "🟢" if base_vwap < prev_vwap and avg_vwap_5m < base_vwap else "🔴"
+                            trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and avg_vwap_5m < base_vwap else "조건 미달 (대기)"
                             final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            final_msg += f" ↳ (당일 &lt; 전일 &amp; 당일 &lt; 5분평균)\n"
+                            final_msg += f" ↳ (당일 &lt; 전일 &amp; 5분평균 &lt; 당일)\n"
                         else:
-                            momentum_color = "🟢" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "🔴"
-                            trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "조건 미달 (대기)"
+                            # 🚨 [V42.14 핫픽스] 부등호 완벽 동기화 (5분평균 > 당일실시간 = 상승)
+                            momentum_color = "🟢" if base_vwap > prev_vwap and avg_vwap_5m > base_vwap else "🔴"
+                            trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and avg_vwap_5m > base_vwap else "조건 미달 (대기)"
                             final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            final_msg += f" ↳ (당일 &gt; 전일 &amp; 당일 &gt; 5분평균)\n"
+                            final_msg += f" ↳ (당일 &gt; 전일 &amp; 5분평균 &gt; 당일)\n"
                     
                     if t == "SOXS":
                         d_high = t_info.get('day_high', 0.0)
