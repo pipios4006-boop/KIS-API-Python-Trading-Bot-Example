@@ -22,6 +22,7 @@
 # NEW: [V40.XX 옴니 매트릭스] SOXL/SOXS 듀얼 모멘텀 티커 스위칭 완벽 분기 및 V-REV/AVWAP 권한 개방 완료
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 종목 모드 전환 영구 락다운 및 듀얼 모멘텀 티커 라우팅 팩트 정립
 # 🚨 MODIFIED: [V42.01 갭 스위칭 자율주행] 수동 제어(ON/OFF/THRESH_SET) 콜백 라우터 영구 소각
+# 🚨 MODIFIED: [V42.02 핫픽스] 운용 종목 선택 메뉴(/ticker)에서 SOXS 듀얼 콤보 라우팅 원천 차단 (팻핑거 방어)
 # ==========================================================
 import logging
 import datetime
@@ -721,8 +722,6 @@ class TelegramCallbacks:
                     
                 msg, markup = self.view.get_avwap_console_menu(ticker)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                
-        # MODIFIED: [V42.01 갭 스위칭 자율주행] VREV_GAP 및 VREV (GAP_ON/OFF/THRESH_SET) 수동 제어 콜백 라우터 영구 소각
 
         elif action == "MODE":
             mode_val = sub
@@ -757,6 +756,10 @@ class TelegramCallbacks:
                 target_tickers = ["SOXL", "TQQQ"]
                 msg_txt = "SOXL + TQQQ 통합"
             elif "," in sub:
+                # 🚨 [V42.02 핫픽스] 과거 듀얼 모멘텀 버튼(SOXL,SOXS) 클릭 시 차단
+                if "SOXS" in sub.split(","):
+                    await query.answer("⚠️ [절대 헌법 위반] SOXS는 듀얼 모멘텀 암살자 전용이므로 메인 장부에 등록할 수 없습니다.", show_alert=True)
+                    return
                 target_tickers = sub.split(",")
                 msg_txt = " + ".join(target_tickers) + " 듀얼 모멘텀"
             else:
