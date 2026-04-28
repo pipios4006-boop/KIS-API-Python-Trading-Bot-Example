@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V42.05 핫픽스] final_msg 변수 할당 누락으로 인한 UnboundLocalError 런타임 붕괴 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [V42.06 핫픽스] SOXS 레이더 내 고가/저가 이식 및 자율지표(Autonomous Indicators) 로직 전면 폐기 완료.
 # 🚨 MODIFIED: [V42.07 핫픽스] 시작 메시지의 옴니 매트릭스 국면 판별 시간(10:20 EST)을 서머타임에 맞춰 KST(23:20/00:20)로 동적 변환 및 시계열 최하단으로 이동 렌더링 이식 완료.
+# 🚨 MODIFIED: [V42.08 핫픽스] 듀얼 모멘텀 암살자 기초자산(SOXX) 레이더 순서 변경 (실시간 ➔ 5분평균) 및 갭(%) 산출 렌더링 이식 완료.
 # ==========================================================
 import os
 import math
@@ -77,7 +78,6 @@ class TelegramView:
         msg += "🔹 10:00 : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
         msg += f"🔹 {fact_hour}:05 : 🌃 통합 주문 자동 실행\n"
-        # 🚨 [V42.07] 옴니 매트릭스 시계열 이동 및 동적 타임존 렌더링
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n\n"
         
         msg += "🛠 [ 주요 명령어 ]\n"
@@ -259,7 +259,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V42.07 옴니 매트릭스 듀얼 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V42.08 옴니 매트릭스 듀얼 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -516,6 +516,7 @@ class TelegramView:
 
         final_msg = header_msg + body_msg
         
+        # 🚨 [V42.08] 듀얼 모멘텀 레이더 순서 변경 및 갭(%) 산출 렌더링 이식
         if avwap_tickers_data:
             ref_info = avwap_tickers_data.get('SOXL') or list(avwap_tickers_data.values())[0]
             base_tkr = ref_info.get('avwap_base_ticker', 'N/A')
@@ -528,11 +529,19 @@ class TelegramView:
             
             if prev_vwap > 0:
                 final_msg += f"▫️ 전일 VWAP: ${prev_vwap:,.2f}\n"
-                if avg_vwap_5m > 0:
-                    final_msg += f"▫️ 당일 5분 평균 VWAP: ${avg_vwap_5m:,.2f}\n"
-                final_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
+                
+                rt_gap = ((base_vwap - prev_vwap) / prev_vwap) * 100
+                final_msg += f"▫️ 실시간 VWAP: ${base_vwap:,.2f} ({rt_gap:+.2f}%)\n"
+                
+                if avg_vwap_5m > 0 and base_vwap > 0:
+                    avg_5m_gap = ((avg_vwap_5m - base_vwap) / base_vwap) * 100
+                    final_msg += f"▫️ 5분 평균 VWAP: ${avg_vwap_5m:,.2f} ({avg_5m_gap:+.2f}%)\n"
+                elif avg_vwap_5m > 0:
+                    final_msg += f"▫️ 5분 평균 VWAP: ${avg_vwap_5m:,.2f}\n"
             else:
-                final_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
+                final_msg += f"▫️ 실시간 VWAP: ${base_vwap:,.2f}\n"
+                if avg_vwap_5m > 0:
+                    final_msg += f"▫️ 5분 평균 VWAP: ${avg_vwap_5m:,.2f}\n"
                 
             for t in ['SOXL', 'SOXS', 'TQQQ']:
                 if t in avwap_tickers_data:
