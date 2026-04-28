@@ -6,6 +6,7 @@
 # 🚨 MODIFIED: [V42.12 그랜드 핫픽스] 부등호 논리 완벽 원상 복구! (당일 > 5분평균 = 상승 롱 / 당일 < 5분평균 = 하락 숏)
 # 🚨 MODIFIED: [V42.13 핫픽스] 5분 평균 VWAP 갭 렌더링 수식을 (5분평균-실시간)/실시간으로 교정하여 직관적인 UI(+) 제공.
 # 🚨 MODIFIED: [V42.14 핫픽스] 모멘텀 돌파 UI 텍스트 부등호(5분평균 > 당일 = 롱) 팩트 동기화 완료.
+# 🚨 MODIFIED: [V42.15 핫픽스] /settlement 및 락온 경고창에 남아있던 과거의 잔재(2%/-6%)를 4.0%/-8.0%로 팩트 교정 완료.
 # ==========================================================
 import os
 import math
@@ -213,7 +214,8 @@ class TelegramView:
         msg += "⚠️ <b>[ 파괴적 제약 사항 (V41 락온) ]</b>\n"
         msg += "1. 기존 V14의 상방 스나이퍼 기능은 즉시 영구 셧다운됩니다.\n"
         msg += "2. V-REV 큐(Queue)와는 물량과 평단가가 100% 분리되어 독립 연산됩니다.\n"
-        msg += "3. 손절(-6.0%) 피격 시에도 당일 영구 동결이 해제되고 즉각 다음 타점을 탐색합니다.\n\n"
+        # 🚨 [V42.15 핫픽스] 8.0% 경고창 팩트 교정
+        msg += "3. 손절(-8.0%) 피격 시에도 당일 영구 동결이 해제되고 즉각 다음 타점을 탐색합니다.\n\n"
         msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
         
         keyboard = [
@@ -253,7 +255,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V42.14 옴니 매트릭스 듀얼 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V42.15 옴니 매트릭스 듀얼 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -531,7 +533,6 @@ class TelegramView:
                 final_msg += f"▫️ 실시간 VWAP: ${base_vwap:,.2f} ({rt_gap:+.2f}%)\n"
                 
                 if avg_vwap_5m > 0 and base_vwap > 0:
-                    # 🚨 [V42.13 핫픽스] 5분 평균이 실시간보다 크면 +로 표출되도록 정방향 교정
                     avg_5m_gap = ((avg_vwap_5m - base_vwap) / base_vwap) * 100
                     final_msg += f"▫️ 5분 평균 VWAP: ${avg_vwap_5m:,.2f} ({avg_5m_gap:+.2f}%)\n"
                 elif avg_vwap_5m > 0:
@@ -561,13 +562,11 @@ class TelegramView:
                         
                     if prev_vwap > 0:
                         if t == "SOXS":
-                            # 🚨 [V42.14 핫픽스] 부등호 완벽 동기화 (5분평균 < 당일실시간 = 하락)
                             momentum_color = "🟢" if base_vwap < prev_vwap and avg_vwap_5m < base_vwap else "🔴"
                             trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and avg_vwap_5m < base_vwap else "조건 미달 (대기)"
                             final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
                             final_msg += f" ↳ (당일 &lt; 전일 &amp; 5분평균 &lt; 당일)\n"
                         else:
-                            # 🚨 [V42.14 핫픽스] 부등호 완벽 동기화 (5분평균 > 당일실시간 = 상승)
                             momentum_color = "🟢" if base_vwap > prev_vwap and avg_vwap_5m > base_vwap else "🔴"
                             trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and avg_vwap_5m > base_vwap else "조건 미달 (대기)"
                             final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
@@ -626,7 +625,8 @@ class TelegramView:
                 msg += "▫️ 막판 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
                 
                 if hasattr(config, 'get_avwap_hybrid_mode') and config.get_avwap_hybrid_mode(t):
-                    status_label = f"💼 V41 다중 출장 락온 (+2% 고정)"
+                    # 🚨 [V42.15 핫픽스] 4.0% 팩트 교정
+                    status_label = f"💼 V41 다중 출장 락온 (+4.0% 고정)"
                     msg += f"▫️ AVWAP 암살자: <b>{status_label}</b>\n"
                 elif hasattr(config, 'get_avwap_hybrid_mode'):
                     msg += f"▫️ AVWAP 암살자: <b>비활성 (OFF)</b>\n"
