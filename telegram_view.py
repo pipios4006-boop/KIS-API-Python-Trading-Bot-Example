@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [V42.01 갭 스위칭 자율주행] 수동 제어(Toggle) 스위치 영구 소각 및 자율주행 텍스트 렌더링 교정
 # 🚨 MODIFIED: [V42.02 핫픽스] 텔레그램 HTML 파싱 에러(Can't parse entities) 완벽 수술. 부등호(<, >) 및 앰퍼샌드(&) 이스케이프 처리 완료.
 # 🚨 MODIFIED: [V42.04 핫픽스] 듀얼 모멘텀 레이더 중복 렌더링 찌꺼기 100% 영구 소각. 기초자산(SOXX) 데이터 단일 병합 완료.
+# 🚨 MODIFIED: [V42.05 핫픽스] final_msg 변수 할당 누락으로 인한 UnboundLocalError 런타임 붕괴 100% 팩트 교정 완료.
 # ==========================================================
 import os
 import math
@@ -564,6 +565,8 @@ class TelegramView:
                     body_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
                     
             body_msg += "\n"
+
+        final_msg = header_msg + body_msg
 
         vol_summaries = []
         for t_info in ticker_data:
