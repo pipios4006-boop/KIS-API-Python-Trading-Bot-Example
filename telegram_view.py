@@ -8,6 +8,7 @@
 # 🚨 MODIFIED: [V41.XX 파격적 수술] AVWAP 콘솔 및 지시서 렌더링 텍스트 전면 개조 (쿨다운 철거 및 5분 평균 VWAP 레이더 탑재)
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 종목 렌더링 영구 소각 및 계층형 트리 구조(자동/수동 ➔ AVWAP) UI 정비
 # 🚨 MODIFIED: [V43.00 갭 스위칭 자율주행] 수동 제어(Toggle) 스위치 영구 소각 및 자율주행 텍스트 렌더링 교정
+# 🚨 MODIFIED: [V43.01 핫픽스] SOXS 지시서 렌더링 시 V-REV 껍데기(보일러플레이트) 100% 영구 적출. 오직 암살자 팩트만 진공 압축 표출.
 # ==========================================================
 import os
 import math
@@ -254,7 +255,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V40.00 옴니 매트릭스 듀얼 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V42.01 옴니 매트릭스 듀얼 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -314,6 +315,44 @@ class TelegramView:
         for t_info in ticker_data:
             t = t_info['ticker']
             v_mode = t_info['version']
+            
+            # 🚨 [V43.01 핫픽스] SOXS는 V-REV 메인 렌더링 껍데기를 100% 생략하고 오직 AVWAP 파트만 진공 압축 표출
+            if t == "SOXS":
+                if t_info.get('avwap_active', False):
+                    avwap_qty = t_info.get('avwap_qty', 0)
+                    avwap_avg = t_info.get('avwap_avg', 0.0)
+                    avwap_status = t_info.get('avwap_status', '👀 장초반 10시 필터 대기')
+                    avwap_strikes = t_info.get('avwap_strikes', 0)
+                    
+                    base_tkr = t_info.get('avwap_base_ticker', 'N/A')
+                    base_vwap = t_info.get('avwap_base_vwap', 0.0)
+                    prev_vwap = t_info.get('avwap_prev_vwap', 0.0)
+                    avg_vwap_5m = t_info.get('avwap_avg_vwap_5m', 0.0) 
+                    
+                    body_msg += f"⚔️ <b>[ V41 VWAP 모멘텀 돌파 암살자 (SOXS 숏) ]</b>\n"
+                    if avwap_strikes > 0:
+                        body_msg += f"💼 <b>다중 출장 모드: {avwap_strikes}회차 교전 완료</b>\n"
+                        
+                    body_msg += f"▫️ 기초자산(Base): <b>{base_tkr}</b>\n"
+                    
+                    if prev_vwap > 0:
+                        body_msg += f"▫️ 전일 VWAP: ${prev_vwap:,.2f}\n"
+                        if avg_vwap_5m > 0:
+                            body_msg += f"▫️ 당일 5분 평균 VWAP: ${avg_vwap_5m:,.2f}\n"
+
+                        body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
+                        
+                        momentum_color = "🟢" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "🔴"
+                        trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "조건 미달 (대기)"
+                        body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
+                        body_msg += f" ↳ (당일 < 전일 & 당일 < 5분평균)\n"
+                    else:
+                        body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
+                        
+                    body_msg += f"▫️ 현재가: ${t_info.get('curr', 0.0):.2f}\n"    
+                    body_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
+                    body_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n\n"
+                continue # SOXS는 메인 장부 렌더링을 완전히 Bypass!
             
             is_manual_vwap = t_info.get('is_manual_vwap', False)
             is_zero_start = t_info.get('is_zero_start', False)
@@ -439,7 +478,6 @@ class TelegramView:
                 if omni_msg:
                     body_msg += f"⛔ <b>옴니 매트릭스 락다운:</b> {omni_msg}\n"
                 
-                # MODIFIED: [V43.00] 갭 스위칭 자율주행 렌더링 팩트 교정
                 body_msg += f"⚡ <b>[Gap Hijack 🤖자율주행]</b> 상승장 판별 시 잔여예산 스윕 대기\n"
                 
                 raw_guidance = t_info.get('v_rev_guidance', " (가이던스 대기 중)")
@@ -475,16 +513,10 @@ class TelegramView:
 
                         body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
                         
-                        if t.upper() == "SOXS":
-                            momentum_color = "🟢" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "🔴"
-                            trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "조건 미달 (대기)"
-                            body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            body_msg += f" ↳ (당일 < 전일 & 당일 < 5분평균)\n"
-                        else:
-                            momentum_color = "🟢" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "🔴"
-                            trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "조건 미달 (대기)"
-                            body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            body_msg += f" ↳ (당일 > 전일 & 당일 > 5분평균)\n"
+                        momentum_color = "🟢" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "🔴"
+                        trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "조건 미달 (대기)"
+                        body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
+                        body_msg += f" ↳ (당일 > 전일 & 당일 > 5분평균)\n"
                     else:
                         body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
                         
@@ -546,6 +578,10 @@ class TelegramView:
 
         vol_summaries = []
         for t_info in ticker_data:
+            # 🚨 [V43.01 핫픽스] SOXS는 SOXL과 겹치므로 하단 자율지표 요약 브리핑에서 스킵
+            if t_info['ticker'] == 'SOXS': 
+                continue
+                
             if 'vol_weight' in t_info and 'vol_status' in t_info:
                 vol_summaries.append(f"{t_info['ticker']}: {t_info['vol_weight']} ({t_info['vol_status']})")
         
@@ -587,7 +623,6 @@ class TelegramView:
                 msg += f"▫️ 자동복리: {comp_rate}%\n"
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"
                 
-                # MODIFIED: [V43.00] 갭 스위칭 자율주행 팩트 렌더링
                 msg += "▫️ 막판 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
                 
                 if hasattr(config, 'get_avwap_hybrid_mode') and config.get_avwap_hybrid_mode(t):
@@ -630,8 +665,6 @@ class TelegramView:
                     avwap_cb = f"MODE:AVWAP_OFF:{t}" 
                 
                 keyboard.append([InlineKeyboardButton(avwap_txt, callback_data=avwap_cb)])
-                
-                # MODIFIED: [V43.00] 장막판 갭 스위칭 수동 조작 버튼 전면 소각
                 
                 if is_avwap and t == "SOXL":
                     keyboard.append([InlineKeyboardButton(f"🔫 {t} (롱) + SOXS (숏) 모멘텀 콘솔", callback_data=f"AVWAP:MENU:{t}")])
