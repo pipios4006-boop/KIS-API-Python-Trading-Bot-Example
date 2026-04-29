@@ -28,6 +28,8 @@
 # 🚨 MODIFIED: [V43.11 UI 극한 다이어트] 수동 전환과 목표가 텍스트 입력을 1개 라우터(TARGET_MANUAL)로 통폐합하여 UX 동선 최적화.
 # 🚨 MODIFIED: [V43.12 텔레그램 멱등성 붕괴 방어] AVWAP 콘솔 업데이트 시 발생하는 'Message is not modified' 400 에러를 Safe Bypass 쉴드로 원천 차단 완료.
 # 🚨 MODIFIED: [V43.13 런타임 캐시 락온] AVWAP_SET 콜백에서 봇 데몬의 팩트 app_data 메모리 참조를 동기화하여 스위칭 증발(Amnesia) 버그 영구 소각 완료.
+# 🚨 MODIFIED: [V43.14 직관적 버튼 렌더링] TARGET_MANUAL 콜백이 수동 모드 '전환(토글)'만을 전담하도록 팩트 분리 완료.
+# 🚨 MODIFIED: [V43.16 상태 인터셉터 락온] '타점수정' 클릭 시 채팅방 ID 기반 user_states를 정확히 할당하여 텍스트 입력이 무시되던 맹점 완벽 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -717,7 +719,6 @@ class TelegramCallbacks:
                     
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ <b>집행 방식:</b> {mode_txt}\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
 
-        # 🚨 [V43.13 런타임 캐시 락온] AVWAP 콜백 동작 시 봇 데몬이 쥐고 있는 실제 메모리(app_data)를 100% 동기화
         elif action == "AVWAP_SET":
             action_type = sub
             ticker = data[2]
@@ -735,20 +736,25 @@ class TelegramCallbacks:
                 
             tracking_cache = app_data.setdefault('sniper_tracking', {})
             
-            if action_type == "TARGET_MANUAL":
-                tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "MANUAL"
+            if action_type == "TARGET":
+                # 🚨 [V43.16] user_states를 정확히 할당하여 텍스트 입력을 인터셉터로 토스
                 controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
-                
+                await context.bot.send_message(chat_id, f"✏️ <b>[{ticker}] 수동 목표 수익률(%)</b>을 숫자로 입력하세요.\n(예: 2.0, 3.5, 4.0)\n※ 입력 완료 시 자동으로 '🖐️수동 고정' 모드로 전환됩니다.", parse_mode='HTML')
+                await query.answer("목표 수익률 입력 대기 중...", show_alert=False)
+
+            elif action_type == "TARGET_MANUAL":
+                tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "MANUAL"
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
                     msg, markup = await plugin.get_console_message(app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception:
-                    pass
-                    
-                await context.bot.send_message(chat_id, f"🖐️ <b>[{ticker}] 수동 고정 모드 전환!</b>\n🎯 <b>목표 수익률(%)</b>을 숫자로 입력하세요.\n(예: 2.0, 3.5, 4.0)\n※ -8.0% 하드스탑 컷은 안전을 위해 고정됩니다.", parse_mode='HTML')
-                await query.answer("수동 목표 입력 대기 중...", show_alert=False)
+                    await query.answer(f"✅ [{ticker}] 🖐️ 수동 고정 모드로 전환되었습니다.", show_alert=False)
+                except Exception as e:
+                    if "Message is not modified" in str(e):
+                        await query.answer(f"✅ [{ticker}] 이미 🖐️수동 모드입니다.", show_alert=False)
+                    else:
+                        pass
 
             elif action_type == "TARGET_AUTO":
                 tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "AUTO"
