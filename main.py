@@ -9,6 +9,7 @@
 # 🚨 [V25.19 핫픽스] 듀얼 레퍼런싱(TICKER_BASE_MAP) 전역 공유 파이프라인 완벽 확립
 # 🚀 [V27.00 자가 업데이트 라우터 이식] 텔레그램 핸들러 루프에 'update' 명령어 공식 등록 완료
 # NEW: [V44.07 암살자 타임라인 전진 배치] 옴니 매트릭스 스캔 및 스나이퍼 격발 10:20 -> 10:00 EST 락온 수술 완료
+# MODIFIED: [V44.07 핫픽스] scheduler_core에서 영구 소각된 get_target_hour 유령 임포트 참조 완벽 적출.
 # ==========================================================
 
 import os
@@ -36,7 +37,6 @@ from scheduler_core import (
     scheduled_auto_sync_winter,
     scheduled_force_reset,
     scheduled_self_cleaning,
-    get_target_hour,
     perform_self_cleaning
 )
 from scheduler_trade import (
