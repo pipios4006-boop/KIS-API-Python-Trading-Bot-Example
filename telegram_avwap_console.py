@@ -187,9 +187,13 @@ class AvwapConsolePlugin:
                     pos = min(5, max(0, int(exh / 20)))
                     return "━" * pos + "🎯" + "━" * (5 - pos)
                 
+                # NEW: [당일 고가 갭(Gap) 팩트 연산 및 0% 기준선 명시]
+                high_gap_dollar = day_high - day_low
+                high_gap_pct = (high_gap_dollar / prev_c) * 100 if prev_c > 0 else 0.0
+                
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
-                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b>\n"
-                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b>\n"
+                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> (저가 대비 <b>+{high_gap_pct:.2f}%</b> 갭)\n"
+                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> (0% 베이스라인)\n"
                 msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> (저가 대비 <b>+{actual_gap_pct:.2f}%</b> 갭)\n\n"
                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
