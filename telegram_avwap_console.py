@@ -1,5 +1,5 @@
 # ==========================================================
-# [telegram_avwap_console.py] - 🌟 V43.14 신규 AVWAP 독립 관제탑 플러그인 🌟
+# [telegram_avwap_console.py] - 🌟 V43.15 신규 AVWAP 독립 관제탑 플러그인 🌟
 # 🚨 NEW: 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 듀얼 모멘텀 레이더를 분리 독립시킴.
 # 🚨 MODIFIED: [V43.07] 당일 저가(Day Low) 0점 앵커 기반 ATR5/ATR14 체력 소진율 시각화 바(Bar) 이식.
 # 🚨 NEW: [V43.07] 체력 소진율(90%, 80%, 70%)에 따른 목표 수익률 자율주행(Auto) 엔진 및 스위치 장착.
@@ -9,6 +9,7 @@
 # 🚨 MODIFIED: [V43.11 극한 다이어트] 수동 모드 전환과 목표가 입력을 1개 버튼으로 통폐합하고, 1개 종목의 모든 제어 버튼을 가로 1줄에 진공 압축 완료.
 # 🚨 MODIFIED: [V43.12 텔레그램 멱등성 붕괴 방어] 메시지 하단에 초(Second) 단위 타임스탬프를 팩트 주입하여 'Message is not modified' 400 에러를 원천 차단.
 # 🚨 MODIFIED: [V43.14 직관적 버튼 렌더링] 버튼 텍스트가 '현재 적용 중인 모드와 퍼센트(%)'를 직관적으로 표출하도록 완전 개편 및 원터치 토글 로직 적용 완료.
+# 🚨 MODIFIED: [V43.15 런타임 즉사 방어] 조건 미달로 세부 정보가 은폐(show_details=False)될 때 버튼 변수(btn_mode_text)까지 할당 누락되던 UnboundLocalError 팩트 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -42,6 +43,7 @@ class AvwapConsolePlugin:
 
         tracking_cache = app_data.get('sniper_tracking', {})
         
+        # 1. 기초자산(SOXX) 모멘텀 스캔 (타임아웃 족쇄 4초)
         base_tkr = "SOXX"
         base_prev_vwap, base_curr_vwap = 0.0, 0.0
         avg_vwap_5m = 0.0
@@ -158,6 +160,42 @@ class AvwapConsolePlugin:
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
             msg += f"▫️ 모멘텀 상태: {trend_str}\n"
 
+            # 💡 [V43.15] 버튼 렌더링에 필요한 변수들을 은폐 조건 밖으로 꺼내 항시 연산
+            exh_5 = 0.0
+            exh_14 = 0.0
+            atr5_limit = 0.0
+            atr14_limit = 0.0
+            ref_price = curr_p
+            ref_label = "현재가"
+
+            if atr5 > 0 and atr14 > 0 and prev_c > 0 and day_low > 0:
+                ref_price = avwap_avg if (avwap_qty > 0 and avwap_avg > 0) else curr_p
+                ref_label = "매수평단" if (avwap_qty > 0 and avwap_avg > 0) else "현재가"
+                
+                atr5_price = prev_c * (atr5 / 100.0)
+                atr14_price = prev_c * (atr14 / 100.0)
+                
+                atr5_limit = day_low + atr5_price
+                atr14_limit = day_low + atr14_price
+                
+                exh_5 = ((ref_price - day_low) / atr5_price * 100) if atr5_price > 0 else 0
+                exh_14 = ((ref_price - day_low) / atr14_price * 100) if atr14_price > 0 else 0
+
+            if target_mode == "AUTO":
+                if exh_5 >= 90: dynamic_target = 2.0
+                elif exh_5 >= 80: dynamic_target = 3.0
+                elif exh_5 >= 70: dynamic_target = 4.0
+                else: dynamic_target = user_target_pct
+                
+                target_display = f"🤖자율주행 (+{dynamic_target:.1f}%)"
+                btn_mode_text = f"🤖자율 (+{dynamic_target:.1f}%)"
+                toggle_target_action = "TARGET_MANUAL"
+            else:
+                target_display = f"🖐️수동고정 (+{user_target_pct:.1f}%)"
+                btn_mode_text = f"🖐️수동 (+{user_target_pct:.1f}%)"
+                toggle_target_action = "TARGET_AUTO"
+
+            # 상세 정보 은폐 여부
             show_details = momentum_met or (avwap_qty > 0) or is_shutdown
 
             if not show_details:
@@ -172,18 +210,6 @@ class AvwapConsolePlugin:
                 msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
 
                 if atr5 > 0 and atr14 > 0 and prev_c > 0 and day_low > 0:
-                    ref_price = avwap_avg if (avwap_qty > 0 and avwap_avg > 0) else curr_p
-                    ref_label = "매수평단" if (avwap_qty > 0 and avwap_avg > 0) else "현재가"
-                    
-                    atr5_price = prev_c * (atr5 / 100.0)
-                    atr14_price = prev_c * (atr14 / 100.0)
-                    
-                    atr5_limit = day_low + atr5_price
-                    atr14_limit = day_low + atr14_price
-                    
-                    exh_5 = ((ref_price - day_low) / atr5_price * 100) if atr5_price > 0 else 0
-                    exh_14 = ((ref_price - day_low) / atr14_price * 100) if atr14_price > 0 else 0
-                    
                     def make_bar(exh):
                         pos = min(5, max(0, int(exh / 20)))
                         return "━" * pos + "🎯" + "━" * (5 - pos)
@@ -200,23 +226,6 @@ class AvwapConsolePlugin:
                     if exh_5 >= 90:
                         msg += " ⚠️ <i>[경고] 단기 체력 90% 소진. 익절라인 하향 권장!</i>\n"
 
-                if target_mode == "AUTO":
-                    if exh_5 >= 90: dynamic_target = 2.0
-                    elif exh_5 >= 80: dynamic_target = 3.0
-                    elif exh_5 >= 70: dynamic_target = 4.0
-                    else: dynamic_target = user_target_pct
-                    target_display = f"🤖자율주행 (+{dynamic_target:.1f}%)"
-                    
-                    # 💡 [V43.14] 버튼 표출: 현재 '자율'이며, 클릭하면 '수동'으로 전환됨
-                    btn_mode_text = f"🤖자율 (+{dynamic_target:.1f}%)"
-                    toggle_target_action = f"TARGET_MANUAL"
-                else:
-                    target_display = f"🖐️수동고정 (+{user_target_pct:.1f}%)"
-                    
-                    # 💡 [V43.14] 버튼 표출: 현재 '수동'이며, 클릭하면 '자율'로 전환됨
-                    btn_mode_text = f"🖐️수동 (+{user_target_pct:.1f}%)"
-                    toggle_target_action = f"TARGET_AUTO"
-
                 msg += f"▫️ 목표 익절: <b>{target_display}</b> | 하드스탑: <b>-8.0%</b>\n"
 
                 status_txt = "👀 타점 대기"
@@ -224,7 +233,7 @@ class AvwapConsolePlugin:
                 elif avwap_qty > 0: status_txt = "🎯 딥매수 완료 (익절 감시중)"
                 msg += f"▫️ 상태: <b>{status_txt}</b>\n"
 
-            # 💡 [V43.14] 원터치 토글 및 명확한 상태 표시를 위한 3버튼 렌더링
+            # 💡 렌더링 파트
             btn_toggle_mode = InlineKeyboardButton(btn_mode_text, callback_data=f"AVWAP_SET:{toggle_target_action}:{t}")
             btn_input_target = InlineKeyboardButton("✏️타점수정", callback_data=f"AVWAP_SET:TARGET:{t}")
             
