@@ -1,5 +1,5 @@
 # ==========================================================
-# [telegram_avwap_console.py] - 🌟 V43.25 신규 AVWAP 독립 관제탑 플러그인 🌟
+# [telegram_avwap_console.py] - 🌟 V43.26 신규 AVWAP 독립 관제탑 플러그인 🌟
 # 🚨 NEW: 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 듀얼 모멘텀 레이더를 분리 독립시킴.
 # 🚨 MODIFIED: [V43.18] 달러 팩트 갭(Gap) 시각화 및 잔여 체력 달러 연산.
 # 🚨 MODIFIED: [V43.19] 퍼센트(%) 팩트 통일 (실제 갭과 잔여 체력 백분율 환산).
@@ -9,6 +9,7 @@
 # 🚨 MODIFIED: [V43.23] 최저 수익률 2.0% 절대 방어막 적용.
 # 🚨 MODIFIED: [V43.24] 타점 팩트 시각화 (격발 시 달러 익절가 노출).
 # 🚨 MODIFIED: [V43.25 2-Button 미니멀리즘] 각 종목의 버튼을 2개로 압축하고, 버튼명에 티커(SOXL/SOXS)를 명시하여 오조작을 원천 차단하는 궁극의 UX 설계 적용 완료.
+# 🚨 MODIFIED: [V43.26] 당일 고가/저가/현재가 갭 렌더링 텍스트 다이어트 및 체력 소진율 렌더링 줄바꿈(Formatting) 수술.
 # ==========================================================
 import logging
 import datetime
@@ -187,18 +188,19 @@ class AvwapConsolePlugin:
                     pos = min(5, max(0, int(exh / 20)))
                     return "━" * pos + "🎯" + "━" * (5 - pos)
                 
-                # NEW: [당일 고가 갭(Gap) 팩트 연산 및 0% 기준선 명시]
+                # MODIFIED: [V43.26] 당일 고가/저가/현재가 갭 렌더링 텍스트 다이어트 (심플화) 및 줄바꿈 적용
                 high_gap_dollar = day_high - day_low
                 high_gap_pct = (high_gap_dollar / prev_c) * 100 if prev_c > 0 else 0.0
                 
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
-                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> (저가 대비 <b>+{high_gap_pct:.2f}%</b> 갭)\n"
-                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> (0% 베이스라인)\n"
-                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> (저가 대비 <b>+{actual_gap_pct:.2f}%</b> 갭)\n\n"
+                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> (+{high_gap_pct:.2f}%)\n"
+                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> (베이스라인)\n"
+                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> (+{actual_gap_pct:.2f}%)\n\n"
                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
-                msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%] <b>({exh_5:.0f}% 소진)</b>\n"
+                msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%]\n"
+                msg += f"               <b>({exh_5:.0f}% 소진)</b>\n"
 
             if target_mode == "AUTO":
                 if exh_5 >= 90: base_target = 2.0
@@ -216,14 +218,12 @@ class AvwapConsolePlugin:
                 applied_pct = dynamic_target
                 target_display = f"🤖자율주행 (+{applied_pct:.1f}%)"
                 
-                # 💡 [V43.25] 버튼 이름에 티커를 명시하여 식별력 극대화
                 btn_mode_text = f"{t} 🤖자율 (+{applied_pct:.1f}%)"
                 toggle_target_action = "TARGET_MANUAL"
             else:
                 applied_pct = user_target_pct
                 target_display = f"🖐️수동고정 (+{applied_pct:.1f}%)"
                 
-                # 💡 [V43.25] 버튼 이름에 티커를 명시하여 식별력 극대화
                 btn_mode_text = f"{t} 🖐️수동 (+{applied_pct:.1f}%)"
                 toggle_target_action = "TARGET_AUTO"
 
@@ -245,7 +245,6 @@ class AvwapConsolePlugin:
             elif avwap_qty > 0: status_txt = "🎯 딥매수 완료 (익절 감시중)"
             msg += f"▫️ 상태: <b>{status_txt}</b>\n"
 
-            # 💡 [V43.25] 타점수정 버튼을 소각하고, 토글 모드 버튼과 스트라이크 버튼 딱 2개만 렌더링
             btn_toggle_mode = InlineKeyboardButton(btn_mode_text, callback_data=f"AVWAP_SET:{toggle_target_action}:{t}")
             
             strike_icon_btn = f"{t} 💼조기퇴근" if not is_multi else f"{t} 🔁다중출장"
