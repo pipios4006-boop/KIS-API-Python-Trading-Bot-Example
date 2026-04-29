@@ -25,6 +25,9 @@
 # 🚨 MODIFIED: [V42.02 핫픽스] 운용 종목 선택 메뉴(/ticker)에서 SOXS 듀얼 콤보 라우팅 원천 차단 (팻핑거 방어)
 # 🚨 MODIFIED: [V43.00 작전 통제실 복구] AVWAP 커스텀 목표수익률(Target) 및 근무모드(조기퇴근/출장) 변경 콜백(AVWAP_SET) 라우팅 신설 완료.
 # 🚨 MODIFIED: [V43.07] 체력 소진율 연동 익절 자율주행 모드(TARGET_AUTO/MANUAL) 및 리프레시 버튼 콜백 라우터 팩트 추가.
+# 🚨 MODIFIED: [V43.11 UI 극한 다이어트] 수동 전환과 목표가 텍스트 입력을 1개 라우터(TARGET_MANUAL)로 통폐합하여 UX 동선 최적화.
+# 🚨 MODIFIED: [V43.12 텔레그램 멱등성 붕괴 방어] AVWAP 콘솔 업데이트 시 발생하는 'Message is not modified' 400 에러를 Safe Bypass 쉴드로 원천 차단 완료.
+# 🚨 MODIFIED: [V43.13 런타임 캐시 락온] AVWAP_SET 콜백에서 봇 데몬의 팩트 app_data 메모리 참조를 동기화하여 스위칭 증발(Amnesia) 버그 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -714,72 +717,94 @@ class TelegramCallbacks:
                     
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ <b>집행 방식:</b> {mode_txt}\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
 
-        # 🚨 [V43.07] 체력 소진율 연동 익절 자율주행 모드 스위칭 라우터 이식
+        # 🚨 [V43.13 런타임 캐시 락온] AVWAP 콜백 동작 시 봇 데몬이 쥐고 있는 실제 메모리(app_data)를 100% 동기화
         elif action == "AVWAP_SET":
             action_type = sub
             ticker = data[2]
             
-            if action_type == "TARGET":
-                controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
-                await context.bot.send_message(chat_id, f"🎯 <b>[{ticker}] AVWAP 수동 목표 수익률(%)</b>을 설정합니다.\n숫자만 입력하세요. (예: 2.0, 3.5, 4.0)\n※ 설정 시 모드가 '🖐️수동 고정'으로 전환됩니다.", parse_mode='HTML')
-            elif action_type == "TARGET_AUTO":
-                app_data = context.bot_data.get('app_data', {})
-                tracking_cache = app_data.setdefault('sniper_tracking', {})
-                tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "AUTO"
-                
+            app_data = context.bot_data.get('app_data')
+            if not app_data:
                 try:
-                    from telegram_avwap_console import AvwapConsolePlugin
-                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    msg, markup = await plugin.get_console_message(app_data)
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                    await query.answer("✅ 🤖 익절 타점 자율주행 모드로 전환되었습니다.", show_alert=False)
-                except Exception as e:
-                    logging.error(f"관제탑 새로고침 에러: {e}")
-                    await query.answer("모드 변경 완료. /avwap을 다시 호출해주세요.", show_alert=False)
-            elif action_type == "TARGET_MANUAL":
-                app_data = context.bot_data.get('app_data', {})
-                tracking_cache = app_data.setdefault('sniper_tracking', {})
+                    jobs = context.job_queue.jobs() if context.job_queue else []
+                    if jobs and len(jobs) > 0 and jobs[0].data is not None:
+                        app_data = jobs[0].data
+                except Exception:
+                    pass
+            if not app_data:
+                app_data = {}
+                
+            tracking_cache = app_data.setdefault('sniper_tracking', {})
+            
+            if action_type == "TARGET_MANUAL":
                 tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "MANUAL"
+                controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
                 
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
                     msg, markup = await plugin.get_console_message(app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                    await query.answer("✅ 🖐️ 수동 타점 고정 모드로 전환되었습니다.", show_alert=False)
+                except Exception:
+                    pass
+                    
+                await context.bot.send_message(chat_id, f"🖐️ <b>[{ticker}] 수동 고정 모드 전환!</b>\n🎯 <b>목표 수익률(%)</b>을 숫자로 입력하세요.\n(예: 2.0, 3.5, 4.0)\n※ -8.0% 하드스탑 컷은 안전을 위해 고정됩니다.", parse_mode='HTML')
+                await query.answer("수동 목표 입력 대기 중...", show_alert=False)
+
+            elif action_type == "TARGET_AUTO":
+                tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "AUTO"
+                try:
+                    from telegram_avwap_console import AvwapConsolePlugin
+                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
+                    msg, markup = await plugin.get_console_message(app_data)
+                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                    await query.answer(f"✅ [{ticker}] 🤖 자율주행 모드로 전환되었습니다.", show_alert=False)
                 except Exception as e:
-                    logging.error(f"관제탑 새로고침 에러: {e}")
-                    await query.answer("모드 변경 완료. /avwap을 다시 호출해주세요.", show_alert=False)
+                    if "Message is not modified" in str(e):
+                        await query.answer(f"✅ [{ticker}] 이미 최신 상태(🤖자율주행)입니다.", show_alert=False)
+                    else:
+                        logging.error(f"관제탑 새로고침 에러: {e}")
+                        await query.answer("모드 변경 완료. /avwap을 다시 호출해주세요.", show_alert=False)
+                    
             elif action_type == "EARLY":
                 self.cfg.set_avwap_multi_strike_mode(ticker, False)
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    app_data = context.bot_data.get('app_data', {})
                     msg, markup = await plugin.get_console_message(app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception: pass
-                await query.answer("✅ 조기퇴근 모드(1회 익절)로 전환되었습니다.", show_alert=False)
+                    await query.answer("✅ 조기퇴근 모드(1회 익절)로 전환되었습니다.", show_alert=False)
+                except Exception as e:
+                    if "Message is not modified" in str(e):
+                        await query.answer("✅ 이미 최신 상태(조기퇴근)입니다.", show_alert=False)
+                    else:
+                        pass
+                
             elif action_type == "MULTI":
                 self.cfg.set_avwap_multi_strike_mode(ticker, True)
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    app_data = context.bot_data.get('app_data', {})
                     msg, markup = await plugin.get_console_message(app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception: pass
-                await query.answer("✅ 무제한 다중 출장 모드로 전환되었습니다.", show_alert=False)
+                    await query.answer("✅ 무제한 다중 출장 모드로 전환되었습니다.", show_alert=False)
+                except Exception as e:
+                    if "Message is not modified" in str(e):
+                        await query.answer("✅ 이미 최신 상태(무제한 다중출장)입니다.", show_alert=False)
+                    else:
+                        pass
+                
             elif action_type == "REFRESH":
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    app_data = context.bot_data.get('app_data', {})
                     msg, markup = await plugin.get_console_message(app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
                     await query.answer("🔄 관제탑 스크린을 최신 팩트로 갱신했습니다.", show_alert=False)
                 except Exception as e:
-                    await query.answer(f"갱신 에러: {e}", show_alert=True)
+                    if "Message is not modified" in str(e):
+                        await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
+                    else:
+                        await query.answer(f"갱신 에러: {e}", show_alert=True)
 
         elif action == "AVWAP":
             if sub == "MENU":
@@ -796,7 +821,10 @@ class TelegramCallbacks:
                     msg, markup = await plugin.get_console_message(app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
                 except Exception as e:
-                    await query.edit_message_text(f"❌ 관제탑 호출 에러: {e}", parse_mode='HTML')
+                    if "Message is not modified" in str(e):
+                        await query.answer("✅ 이미 최신 상태입니다.", show_alert=False)
+                    else:
+                        await query.edit_message_text(f"❌ 관제탑 호출 에러: {e}", parse_mode='HTML')
 
         elif action == "MODE":
             mode_val = sub
