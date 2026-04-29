@@ -1,9 +1,10 @@
 # ==========================================================
-# [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V32.00) 🌟
+# [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V44.03) 🌟
 # 🚨 MODIFIED: [V32.00 그랜드 수술] 불필요한 AVWAP 동적 파라미터 배선 전면 소각 및 클린 라우팅 적용
 # NEW: [V40.XX 옴니 매트릭스] 전역 국면 데이터(regime_data) 수신 및 스나이퍼(AVWAP/V14) 듀얼 라우팅 락온 탑재
 # 🚨 MODIFIED: [V41.XX 파격적 수술] AVWAP 쿨다운 및 손절 셧다운 동결 전면 소각 & 무제한 다중 타격 룰 이식
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 장부 폐기에 따른 SOXL/SOXS 듀얼 모멘텀 스캔 파이프라인 개조
+# NEW: [V44.03 AVWAP 매수 방어] 5일 ATR 진폭 체력 스캔을 위한 동적 파라미터(prev_c, day_low, atr5) 병렬 수집 파이프라인 개통 및 플러그인 인젝션 완료.
 # ==========================================================
 import logging
 import datetime
@@ -96,17 +97,15 @@ async def scheduled_sniper_monitor(context):
                                 tracking_cache[f"REV_{t}_panic_sell_warn"] = True
                                 await context.bot.send_message(
                                     chat_id=chat_id,
-                                    text=f"🚨 <b>[비상] [{t}] 뇌동매매로 인한 잔고 증발이 감지되었습니다.</b>\n"
+                                    text=f"🚨 <b>[비상] [{t}] 수동매매로 인한 잔고 증발이 감지되었습니다.</b>\n"
                                          f"▫️ 봇의 매매가 일시 정지됩니다.\n"
                                          f"▫️ 시드 오염을 막기 위해 즉시 <code>/reset</code> 커맨드를 실행하여 장부를 소각하십시오.",
                                     parse_mode='HTML'
                                 )
                             continue
                 
-                # MODIFIED: [V42.00 아키텍처 개편] AVWAP ON 상태일 때 SOXL 메인 루프에서 SOXS까지 듀얼로 스캔하도록 확장
                 if version == "V_REV" and getattr(cfg, 'get_avwap_hybrid_mode', lambda x: False)(t):
                     avwap_targets = [t]
-                    # t가 SOXL일 때 듀얼 모멘텀(SOXS) 타격 개방
                     if t == "SOXL":
                         avwap_targets.append("SOXS")
                         
@@ -126,7 +125,7 @@ async def scheduled_sniper_monitor(context):
                             
                         if tracking_cache.get(f"AVWAP_SHUTDOWN_{current_target}"): continue
                         
-                        target_base = base_map.get(t, t) # SOXS의 기초자산도 SOXX를 공유
+                        target_base = base_map.get(t, t) 
                         
                         if f"AVWAP_CTX_{current_target}" not in tracking_cache or tracking_cache[f"AVWAP_CTX_{current_target}"] is None:
                             ctx_data = await asyncio.to_thread(strategy.v_avwap_plugin.fetch_macro_context, target_base)
@@ -162,6 +161,23 @@ async def scheduled_sniper_monitor(context):
                         try: df_1min_base = await asyncio.to_thread(broker.get_1min_candles_df, target_base)
                         except: pass
                         
+                        # NEW: [V44.03 AVWAP 매수 방어] 5일 ATR 진폭 체력 스캔을 위한 동적 파라미터 병렬 수집
+                        prev_c, day_low, atr5 = 0.0, 0.0, 0.0
+                        try:
+                            prev_c_task = asyncio.to_thread(broker.get_previous_close, current_target)
+                            high_low_task = asyncio.to_thread(broker.get_day_high_low, current_target)
+                            atr_task = asyncio.to_thread(broker.get_atr_data, current_target)
+                            
+                            res_prev, res_hl, res_atr = await asyncio.wait_for(
+                                asyncio.gather(prev_c_task, high_low_task, atr_task, return_exceptions=True),
+                                timeout=4.0
+                            )
+                            prev_c = float(res_prev) if not isinstance(res_prev, Exception) and res_prev else 0.0
+                            day_low = float(res_hl[1]) if not isinstance(res_hl, Exception) and res_hl else 0.0
+                            atr5 = float(res_atr[0]) if not isinstance(res_atr, Exception) and res_atr else 0.0
+                        except Exception as e:
+                            logging.debug(f"AVWAP 파라미터 병렬 스캔 실패: {e}")
+                        
                         avwap_state_dict = {
                             "strikes": tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0)
                         }
@@ -179,7 +195,10 @@ async def scheduled_sniper_monitor(context):
                             df_1min_base=df_1min_base,
                             now_est=now_est,
                             avwap_state=avwap_state_dict,
-                            regime_data=regime_data
+                            regime_data=regime_data,
+                            prev_close=prev_c,
+                            day_low=day_low,
+                            atr5=atr5
                         )
                         
                         action = decision.get("action")
@@ -229,7 +248,6 @@ async def scheduled_sniper_monitor(context):
                                             logging.warning(f"⚠️ [{current_target}] AVWAP 매수 잔여 취소 실패: {e_cancel}")
                                     
                                     if ccld_qty > 0:
-                                        # 매수 체결 시 현금 차감 (동시 매수 방어)
                                         avwap_free_cash -= (ccld_qty * price)
                                         
                                         strike_cnt = tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0) + 1
@@ -324,14 +342,13 @@ async def scheduled_sniper_monitor(context):
                                                 msg += "\n🛡️ 금일 해당 종목의 15:55 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 영구 셧다운합니다."
                                                 shutdown_flag = True
                                             elif "HARD_STOP" in reason or "손절" in reason:
-                                                msg += "\n🚨 손절(-6.0%) 피격 감지! <b>즉각 다음 모멘텀 타점 탐색</b>을 시작합니다."
+                                                msg += "\n🚨 손절(-8.0%) 피격 감지! <b>즉각 다음 모멘텀 타점 탐색</b>을 시작합니다."
                                                 shutdown_flag = False
                                             else:
                                                 msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 ]</b> 즉각 다음 모멘텀 타점 탐색을 시작합니다."
                                                 shutdown_flag = False
                                                 
                                             new_avg = 0.0
-                                            # 매도 체결 시 현금 반환 (다음 타격 예산 복구)
                                             avwap_free_cash += (ccld_qty * exec_price)
                                         else:
                                             msg += f"\n⚠️ 잔량 {new_qty}주 발생 (미체결 강제 취소됨, 다음 1분봉 루프에서 재시도)"
