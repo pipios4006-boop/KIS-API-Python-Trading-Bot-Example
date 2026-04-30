@@ -13,6 +13,7 @@
 # 🚨 MODIFIED: [V43.27] 전일 종가(Previous Close) 0% 베이스라인 환원 수술. 렌더링되는 모든 등락률(%)을 증권사 앱(MTS/HTS)과 100% 팩트 동기화 완료.
 # 🚨 MODIFIED: [V43.28] 사용자 인지 혼선 방어. 전일 종가(0% 베이스라인) 팩트 렌더링 명시화 및 UI 포맷팅 다이어트 수술.
 # 🚨 MODIFIED: [V44.13 당일 저가 기반 팩트 교정] 체력 소진율(ATR5) 연산의 베이스라인을 전일 종가에서 '당일 저가(Day Low)'로 디커플링하여 실제 바닥 대비 상승 물리력을 100% 팩트 반영.
+# 🚨 MODIFIED: [V44.14 듀얼 팩트 시각화] 당일 고가 및 현재가 우측에 당일 저가 대비 반등폭(Rebound Gap) 퍼센트를 듀얼 표기(/)하여 직관력 극대화.
 # ==========================================================
 import logging
 import datetime
@@ -188,6 +189,11 @@ class AvwapConsolePlugin:
                 rebound_gap = ref_price - day_low if ref_price >= day_low else 0.0
                 actual_rebound_pct = (rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
                 
+                # NEW: [V44.14] 당일 저가 대비 반등폭(Rebound Gap) 듀얼 시각화 연산
+                high_rebound_gap = day_high - day_low if day_high >= day_low else 0.0
+                high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
+                curr_rebound_pct = actual_rebound_pct
+                
                 exh_5 = (actual_rebound_pct / atr5 * 100) if atr5 > 0 else 0
                 rem_5_pct = atr5 - actual_rebound_pct
                 
@@ -197,11 +203,12 @@ class AvwapConsolePlugin:
                     pos = min(5, max(0, int(exh / 20)))
                     return "━" * pos + "🎯" + "━" * (5 - pos)
                 
+                # 듀얼 팩트 렌더링 반영
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
                 msg += f"▫️ 전일 종가: <b>${prev_c:.2f}</b> (베이스라인)\n"
-                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%)\n"
-                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> ({low_pct:+.2f}%)\n"
-                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> ({curr_pct:+.2f}%)\n\n"
+                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%/<b>+{high_rebound_pct:.2f}%</b>)\n"
+                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> ({low_pct:+.2f}%/<b>베이스</b>)\n"
+                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> ({curr_pct:+.2f}%/<b>+{curr_rebound_pct:.2f}%</b>)\n\n"
                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
