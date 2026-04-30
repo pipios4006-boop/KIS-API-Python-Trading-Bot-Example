@@ -1,5 +1,6 @@
+# MODIFIED: [V44.12 V14_VWAP 자동 모드 오판 팩트 교정] 수동 플래그(True) 하드코딩을 False로 도려내어 자동 타임 슬라이싱 락다운 해제
 # ==========================================================
-# FILE: telegram_callbacks.py (Part 1/2)
+# FILE: telegram_callbacks.py
 # ==========================================================
 import logging
 import datetime
@@ -245,9 +246,7 @@ class TelegramCallbacks:
                 page_idx = int(data[2])
                 msg, markup = self.view.get_version_message(history_data, page_index=page_idx)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-# ==========================================================
-# FILE: telegram_callbacks.py (Part 2/2)
-# ==========================================================
+                
         elif action == "RESET":
             await query.answer()
             if sub == "MENU":
@@ -390,12 +389,11 @@ class TelegramCallbacks:
                 except Exception as e:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
-        
+            
         elif action == "EXEC":
             t = sub
             ver = self.cfg.get_version(t)
 
-            # MODIFIED: [V44.09 예방 덫 영구 소각] V-REV는 자전거래 의심 회피를 위해 예방 덫을 완전히 소각했으므로 해당 콜백 접근 시 락다운 팝업 출력
             if ver == "V_REV":
                 await query.answer("🛑 [예방 덫 전면 소각] V-REV 모드는 자전거래 의심을 회피하고 AVWAP 암살자 가동을 위해 예방 덫 수동 장전 기능을 영구 소각했습니다.", show_alert=True)
                 return
@@ -449,7 +447,6 @@ class TelegramCallbacks:
 
             plan = self.strategy.get_plan(t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t], is_simulation=True)
             
-            # NEW: [0주 새출발 디커플링] 0주 보유 상태일 경우 수동 덫(LOC) 장전 시 Buy1 타점을 prev_c * 1.15로 상향 락온하여 체결 원천 차단
             if safe_qty == 0:
                 for o in plan.get('core_orders', []):
                     if o['side'] == 'BUY' and 'Buy1' in o.get('desc', ''):
@@ -609,8 +606,9 @@ class TelegramCallbacks:
                     self.cfg.set_avwap_hybrid_mode(ticker, False)
                     
                 if mode_type == "V14_VWAP":
-                    self.cfg.set_manual_vwap_mode(ticker, True)
-                    mode_txt = "🕒 VWAP 타임 슬라이싱 (유동성 추적)"
+                    # MODIFIED: [V44.12 V14_VWAP 자동 모드 오판 방어] 자동 타임 슬라이싱 모드이므로 manual 플래그를 False로 강제 락온
+                    self.cfg.set_manual_vwap_mode(ticker, False)
+                    mode_txt = "🕒 VWAP 타임 슬라이싱 (자동 유동성 추적)"
                 else:
                     self.cfg.set_manual_vwap_mode(ticker, False)
                     mode_txt = "📉 LOC 단일 타격 (초안정성)"
@@ -719,7 +717,7 @@ class TelegramCallbacks:
                 ticker = data[2]
                 is_hybrid_on = getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False)(ticker)
                 if not is_hybrid_on:
-                    await context.bot.send_message(chat_id, f"⚠️ [{ticker}] AVWAP 하이브리 모드가 꺼져있습니다. 먼저 활성화해주세요.")
+                    await context.bot.send_message(chat_id, f"⚠️ [{ticker}] AVWAP 하이브리드 모드가 꺼져있습니다. 먼저 활성화해주세요.")
                     return
                     
                 try:
