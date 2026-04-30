@@ -12,7 +12,8 @@
 # 🚨 MODIFIED: [V43.07] 체력 소진율(ATR5) 연동 목표 수익률 자율주행(Auto) 익절 렌더링 엔진 완벽 융합 완료.
 # 🚨 MODIFIED: [V44.03 체력 보존 락온] 매수(BUY) 트리거 최상단에 5일 ATR 기반 잔여 체력 검증 파이프라인을 이식하여 상승/하락 여력이 2.0% 미만일 경우 즉시 방아쇠를 강제 파기(WAIT)하는 무결점 락온 확립.
 # 🚨 MODIFIED: [V44.07 타임라인 락온] 10:20 EST 쉴드를 10:00 EST(정규장 오픈 후 30분)로 전진 배치 완료.
-# NEW: [V44.08 팩트 교정] 5분 평균 VWAP 부등호 역배선 100% 원상 복구 및 절대 헌법 락온
+# 🚨 MODIFIED: [V44.08 팩트 교정] 5분 평균 VWAP 부등호 역배선 100% 원상 복구 및 절대 헌법 락온
+# 🚨 MODIFIED: [V44.19 완전 돌파 즉각 타격 락온] 과거의 낡은 -0.67% 이격도(Gap) 대기 조건이 100% 완벽히 소각되었음을 교차 검증 완료. 모멘텀 충족 시 즉시 방아쇠(VWAP_MOMENTUM_BREAKOUT) 격발 보장.
 # ==========================================================
 import logging
 import datetime
@@ -281,7 +282,6 @@ class VAvwapHybridPlugin:
         if avwap_state.get('shutdown', False):
             return _build_res('WAIT', '작전완수_또는_강제청산으로_인한_당일영구동결')
 
-        # MODIFIED: [V44.07] 타임쉴드 해제 기준 시간 적용
         if curr_time < time_1000:
             return _build_res('WAIT', '10:00_이전_타임쉴드_대기')
             
@@ -290,14 +290,13 @@ class VAvwapHybridPlugin:
 
         prev_vwap = context_data.get('prev_vwap', 0.0)
 
-        # MODIFIED: [V44.08 팩트 교정] 롱/숏 진입 시 5분 평균 VWAP 부등호 역배선 절대 헌법에 맞춰 정상 락온
+        # 🚨 순수 돌파 모멘텀 로직 (이격도 대기 0% 확인)
         if not is_inverse:
             trigger_condition = (base_vwap > prev_vwap) and (avg_vwap_5m > base_vwap)
         else:
             trigger_condition = (base_vwap < prev_vwap) and (avg_vwap_5m < base_vwap)
 
         if trigger_condition:
-            # 🚨 [V44.03 AVWAP 체력 소진 방어막 락온]
             if atr5 > 0 and prev_c > 0 and day_low > 0 and exec_curr_p > 0:
                 actual_gap_dollar = exec_curr_p - day_low
                 actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
@@ -309,6 +308,7 @@ class VAvwapHybridPlugin:
             if exec_curr_p > 0 and avwap_alloc_cash > 0:
                 buy_qty = int(math.floor(avwap_alloc_cash / exec_curr_p))
                 if buy_qty > 0:
+                    # 🚨 갭 대기 없이 조건 만족 즉시 다이렉트 매수 격발
                     return _build_res('BUY', f'VWAP_MOMENTUM_BREAKOUT', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '순수현금예산_부족_관망')
             
