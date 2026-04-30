@@ -311,7 +311,8 @@ class TelegramView:
                     half_budget = (t_info.get('seed', 0.0) * 0.15) * 0.5
                     prev_c = t_info.get('prev_close', 0.0)
                     if prev_c > 0:
-                        p1_trigger_fact = round(prev_c / 0.935, 2)
+                        # MODIFIED: [V44.11 팩트 동기화] 0주 새출발 Buy1 타점을 15% 할증(* 1.15)으로 상향 락온 (strategy_reversion.py/strategy_v14_vwap.py 코어와 팩트 동기화)
+                        p1_trigger_fact = round(prev_c * 1.15, 2)
                         p2_trigger_fact = round(prev_c * 0.999, 2)
                         q1 = math.floor(half_budget / p1_trigger_fact)
                         q2 = math.floor(half_budget / p2_trigger_fact)
