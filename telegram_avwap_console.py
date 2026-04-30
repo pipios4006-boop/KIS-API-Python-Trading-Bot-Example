@@ -14,6 +14,7 @@
 # 🚨 MODIFIED: [V43.28] 사용자 인지 혼선 방어. 전일 종가(0% 베이스라인) 팩트 렌더링 명시화 및 UI 포맷팅 다이어트 수술.
 # 🚨 MODIFIED: [V44.13 당일 저가 기반 팩트 교정] 체력 소진율(ATR5) 연산의 베이스라인을 전일 종가에서 '당일 저가(Day Low)'로 디커플링하여 실제 바닥 대비 상승 물리력을 100% 팩트 반영.
 # 🚨 MODIFIED: [V44.14 듀얼 팩트 시각화] 당일 고가 및 현재가 우측에 당일 저가 대비 반등폭(Rebound Gap) 퍼센트를 듀얼 표기(/)하여 직관력 극대화.
+# 🚨 MODIFIED: [V44.15 UI 해상도 업그레이드 및 시각적 환각 교정] 게이지 바(Bar) 연산 시 소수점 버림(int)으로 인한 왜곡 맹점을 반올림(round)으로 적출하고, 10분할로 해상도를 2배 정밀하게 렌더링.
 # ==========================================================
 import logging
 import datetime
@@ -199,9 +200,10 @@ class AvwapConsolePlugin:
                 
                 rem_5_str = f"+{rem_5_pct:.2f}% 추가 상승 여력" if rem_5_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
 
+                # MODIFIED: [V44.15 해상도 업그레이드] int() 버림 오판 소각, 10분할 반올림(round) 락온으로 팩트 시각화 보장
                 def make_bar(exh):
-                    pos = min(5, max(0, int(exh / 20)))
-                    return "━" * pos + "🎯" + "━" * (5 - pos)
+                    pos = min(10, max(0, round(exh / 10)))
+                    return "━" * pos + "🎯" + "━" * (10 - pos)
                 
                 # 듀얼 팩트 렌더링 반영
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
