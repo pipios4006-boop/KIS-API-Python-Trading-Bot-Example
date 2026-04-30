@@ -2,6 +2,7 @@
 # [telegram_view.py]
 # MODIFIED: [V44.08 수동 덫 UI 영구 소각] V-REV 모드에 한하여 자전거래 의심을 차단하기 위해 [🚀 주문 실행] (수동 장전) 버튼 렌더링을 100% 영구 소각.
 # 🚨 MODIFIED: [V44.23 UI 런타임 붕괴 방어막 이식] 데이터 누락(KeyError: 'target')으로 인해 지시서 출력이 기절하는 현상을 원천 차단하기 위해, dict.get() 기반의 Safe-Casting 쉴드를 전면 이식하여 무결점 렌더링 보장.
+# 🚨 MODIFIED: [V44.24 AVWAP 메뉴 하단 렌더링 조건부 이식] AVWAP 하이브리드 암살자가 가동 중인 종목이 있을 때만 지시서 하단에 `/avwap` 관제탑 호출 안내가 표출되도록 UI 렌더링 팩트 교정 완료.
 # ==========================================================
 import os
 import math
@@ -521,7 +522,9 @@ class TelegramView:
             final_msg += f"💡 <i>※ 현재 표출된 계획은 전일 {fact_hour}:05 기준 박제된 스냅샷이며, 금일 {fact_hour}:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
             
-        final_msg += "\n\n▶️ /avwap : 🔫 AVWAP 독립 관제탑 호출"
+        # 🚨 MODIFIED: [V44.24 AVWAP 메뉴 하단 렌더링 조건부 이식]
+        if any(t_info.get('avwap_active', False) for t_info in ticker_data):
+            final_msg += "\n\n▶️ /avwap : 🔫 AVWAP 독립 관제탑 호출"
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
