@@ -1,5 +1,5 @@
 # ==========================================================
-# [strategy_reversion.py] - 🌟 V44.11 0주 새출발 15% 상한가 락온 🌟
+# [strategy_reversion.py] - 🌟 V44.25 예산 탈취(Stealing) 락온 🌟
 # ⚠️ V-REV 하이브리드 엔진 전용 수학적 타격 모듈
 # 💡 5년 백테스트 기반 VWAP 유동성 정밀 가중치(U_CURVE_WEIGHTS) 적용 완료
 # 💡 [V24.16 팩트 동기화] 0주 새출발 디커플링 타점 (Buy1: 0.999, Buy2: /0.935) 원본 유지
@@ -38,6 +38,7 @@
 # 🚨 MODIFIED: [V43.28 엣지 케이스 수술] SELL 이중 차감 조기 종료 방어. LIFO 큐(total_q) 자체가 실시간 팩트이므로 executed 차감을 영구 소각하여 멱등성 확보.
 # 🚨 MODIFIED: [V44.08 팩트 교정] V-REV 매수 예산 잔차 버킷 이월 시 발생하는 수량(Qty) 소수점 섞임 차원 붕괴 영구 방어 완료 (순수 달러($) 캐싱 보장)
 # 🚨 MODIFIED: [V44.11 팩트 교정] 0주 새출발 시 1층 예산 100% 강제 진입을 보장하기 위해 Buy1 상한선을 15% 할증(* 1.15)으로 상향 락온.
+# 🚨 MODIFIED: [V44.25 예산 탈취(Stealing) 런타임 붕괴 방어막 이식] Buy1이 Buy2의 미사용 예산을 훔쳐와 무한 타격(34주 체결 등)하는 차원 붕괴를 영구 소각.
 # ==========================================================
 import math
 import os
@@ -395,11 +396,12 @@ class ReversionStrategy:
             if rem_budget <= 0:
                 return {"orders": [], "trigger_loc": False, "total_q": total_q}
             
-            # 🚨 MODIFIED: [V44.08 팩트 교정] 매수 예산을 1분봉 타임 슬라이싱할 때 오직 '순수 달러($)' 단위로만 캐싱 및 이월되도록 차원 붕괴 방어막 완전 구축
-            slice_budget = rem_budget * slice_ratio_buy
-            
-            raw_b1_slice = slice_budget * 0.5
-            raw_b2_slice = slice_budget - raw_b1_slice
+            # 🚨 MODIFIED: [V44.25 예산 탈취(Stealing) 런타임 붕괴 방어막]
+            # rem_budget을 반으로 가르는 기존 방식은 Buy2의 미사용 예산을 Buy1이 훔쳐서 무한 타격(34주 체결 등)하는 차원 붕괴를 유발.
+            # 전체 예산(alloc_cash)에 현재 분봉의 절대 가중치(current_weight)를 곱해 순수 1분 할당량을 도출하고,
+            # 이를 정확히 50%씩 쪼개어 각각의 고립된 잔차 버킷(Residual)에 이월시키는 완벽한 디커플링 이식.
+            raw_b1_slice = (float(alloc_cash) * 0.5) * current_weight
+            raw_b2_slice = (float(alloc_cash) * 0.5) * current_weight
             
             b1_bucket = float(self.residual["BUY1"].get(ticker, 0.0)) + raw_b1_slice
             b2_bucket = float(self.residual["BUY2"].get(ticker, 0.0)) + raw_b2_slice
