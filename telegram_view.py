@@ -12,6 +12,7 @@
 # 🚨 NEW: [V-REV 전용 수동 제어망 결속] 통합지시서에 V-REV 모드 전용 '1회분 수동매수/수동매도' 버튼 주입 완료. 오리지널(V14) 모드에서는 철저히 격리(Bypass)됨.
 # 🚨 NEW: [큐 장부 매뉴얼 이식] get_queue_management_menu 화면에 추가/삭제/수정 등 수동 조작을 위한 명령어 가이드 표출 기능 팩트 결속.
 # 🚨 NEW: [암살자 독립 소각망 결속] get_reset_menu에 암살자 전용 소각 버튼 추가 및 get_avwap_reset_confirm_menu 팩트 주입 완료.
+# 🚨 MODIFIED: [퇴근 모드 UI 버튼 증발 누수 수술] 당일 매매가 잠금(is_locked=True) 상태일 경우 수동 개입(팻핑거) 버튼을 완벽히 은닉(Bypass)하여 렌더링 무결성 사수 완료.
 # ==========================================================
 import os
 import math
@@ -137,7 +138,6 @@ class TelegramView:
                  InlineKeyboardButton(f"🔥 {safe_t} 장부 영구 소각", callback_data=f"RESET:REV:{t}"),
                  InlineKeyboardButton(f"🔓 {safe_t} 당일 잠금 해제", callback_data=f"RESET:LOCK:{t}")
             ])
-            # NEW: 암살자 단독 소각 버튼 락온
             keyboard.append([
                  InlineKeyboardButton(f"🔫 {safe_t} 암살자 장부 초기화", callback_data=f"RESET:AVWAP:{t}")
             ])
@@ -156,7 +156,6 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # NEW: 암살자 팩트 소각 승인 메뉴
     def get_avwap_reset_confirm_menu(self, ticker):
         safe_t = html.escape(str(ticker))
         msg = f"🚨 <b>[{safe_t} 암살자 장부 소각 최종 확인]</b>\n\n"
@@ -600,10 +599,12 @@ class TelegramView:
                     else:
                         keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 강제 전송", callback_data=f"EXEC:{t}")])
                 elif v_mode == "V_REV":
-                    keyboard.append([
-                        InlineKeyboardButton(f"🟢 {t} 1회분 수동매수", callback_data=f"MANUAL_PORTION:BUY:{t}"),
-                        InlineKeyboardButton(f"🔴 {t} 1회분 수동매도", callback_data=f"MANUAL_PORTION:SELL:{t}")
-                    ])
+                    # 🚨 MODIFIED: [퇴근 모드 UI 버튼 증발 누수 수술] 당일 매매가 잠금(is_locked=True) 상태일 경우 수동 개입(팻핑거) 버튼을 완벽히 은닉(Bypass)하여 렌더링 무결성 사수
+                    if not is_locked:
+                        keyboard.append([
+                            InlineKeyboardButton(f"🟢 {t} 1회분 수동매수", callback_data=f"MANUAL_PORTION:BUY:{t}"),
+                            InlineKeyboardButton(f"🔴 {t} 1회분 수동매도", callback_data=f"MANUAL_PORTION:SELL:{t}")
+                        ])
             
         final_msg = header_msg + body_msg.strip()
         
@@ -816,3 +817,4 @@ class TelegramView:
         if len(body) > (4000 - len(header) - len(footer)):
              body = "… (글자 수 제한으로 이전 로그 생략) …\n" + body[-(3800 - len(header) - len(footer)):]
         return header + body + footer
+
