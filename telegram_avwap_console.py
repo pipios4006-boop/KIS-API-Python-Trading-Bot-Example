@@ -2,15 +2,8 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 46대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [제2헌법 단일 책임 수호] 파일 내에 잘못 병합되었던 글로벌 UI 렌더링 메서드를 100% 영구 소각하고, 오직 '데이 트레이딩 레이더 스캔' 본연의 기능으로 진공 압축 완료.
-# 🚨 MODIFIED: [관제탑 UI 팩트 롤오버] 암살자 지정 예산($) 및 오버나이트 허용 상태를 관제탑 대시보드에 100% 팩트로 표출.
-# 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입.
-# 🚨 MODIFIED: [UI 진공 압축 프로토콜] 인지 부하 감소를 위해 초단기 당일 누적 VWAP 및 숏 스퀴즈 감시망 UI 렌더링 텍스트 블록 100% 영구 소각 (백그라운드 연산은 완벽 보존).
-# 🚨 MODIFIED: [Silent Death 붕괴 수술] 새로고침, 휴장일, 장마감 버튼 클릭 시 무반응을 유발하던 하드코딩 `NONE` 파라미터를 동적 `ticker_clean`으로 100% 팩트 교정 완료.
-# 🚨 MODIFIED: [Thundering Herd 영구 소각] `_get_with_retry` 및 `_fetch_schedule`에 산재하던 파편화된 `sleep(0.06)`을 전면 소각하고 `GlobalThrottle` 중앙 통제소로 비동기 딜레이 100% 위임.
-# 🚨 MODIFIED: [Lost Update 궁극 방어] JSON 상태 파일 읽기(`_read_state`) 시 `GlobalThrottle.get_file_lock()` 기반 파일 뮤텍스를 래핑하여 더티 리드(Dirty Read) 붕괴 원천 차단 및 `.bak` 파일 복구 팩트 결속.
-# 🚨 MODIFIED: [SSOT 락온 수술] 관제탑 UI가 지연된 구형 캐시 상태 파일(avwap_trade_state)의 수량을 참조하던 패러독스를 소각하고, 즉각 반영되는 AssassinLedger를 단일 진실 공급원(SSOT)으로 100% 팩트 락온.
-# 🚨 MODIFIED: [임무 완수 렌더링 오버라이드] 암살자가 +1.0% 전량 익절을 달성하거나 15:59 덤핑을 완수한 경우, '대기 중' 또는 '프리장 미진입 차단'으로 오인 표출되던 패러독스를 원천 차단하고 '당일 임무 완수' 상태를 100% 팩트로 명시적 렌더링하도록 UI 디커플링 로직 결속 완료.
+# 🚨 MODIFIED: [관제탑 UI 팩트 롤오버] 암살자 지정 예산($) 및 오버나이트 허용 상태 표출.
+# 🚨 NEW: [타임쉴드 텍스트 오버라이드] 04:00~04:30 구간 1분 유지 감시 로직을 관제탑 UI에 100% 팩트 표출 완료.
 # ==========================================================
 import logging
 import datetime
@@ -26,7 +19,6 @@ import json
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from short_squeeze_engine import ShortSqueezeScanner
-# 🚨 NEW: [중앙 통제소 결속] 썬더링 허드 방어 및 파일 뮤텍스 강제 적용
 from global_throttle import GlobalThrottle
 
 class AvwapConsolePlugin:
@@ -54,7 +46,6 @@ class AvwapConsolePlugin:
         today_est_date = now_est.date()
         
         def _fetch_schedule():
-            # 🚨 MODIFIED: 파편화된 time.sleep 소각 및 중앙 통제소 락온
             GlobalThrottle.wait_api_sync()
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
@@ -68,7 +59,6 @@ class AvwapConsolePlugin:
                 if attempt == 2:
                     logging.error("🚨 달력 API 호출 에러/타임아웃. Fail-Open 평일 개장으로 강제 폴백합니다.")
                 else: 
-                    # 🚨 3단 지수 백오프는 정상 허용
                     await asyncio.sleep(1.0 * (2 ** attempt))
 
         is_holiday = False
@@ -138,7 +128,6 @@ class AvwapConsolePlugin:
         async def _get_with_retry(func, *args, **kwargs):
             for attempt in range(3):
                 try:
-                    # 🚨 MODIFIED: 파편화된 await asyncio.sleep(0.06) 영구 소각 (GlobalThrottle로 통제권 100% 위임)
                     if asyncio.iscoroutinefunction(func):
                         return await asyncio.wait_for(func(*args, **kwargs), timeout=15.0)
                     else:
@@ -146,7 +135,6 @@ class AvwapConsolePlugin:
                         return await asyncio.wait_for(asyncio.to_thread(p_func), timeout=15.0)
                 except Exception:
                     if attempt == 2: return None
-                    # 🚨 3단 지수 백오프는 정상 허용
                     await asyncio.sleep(1.0 * (2 ** attempt))
 
         try:
@@ -196,14 +184,12 @@ class AvwapConsolePlugin:
         is_assassin_active = False
         is_early_shutdown = False 
         
-        # 🚨 MODIFIED: [당일 임무 완수 렌더링 전용 플래그 수복]
         is_mission_complete = False   
         is_dump_cleared = False       
         
         state_file = f"data/avwap_trade_state_{t}.json"
         try:
             def _read_state():
-                # 🚨 MODIFIED: [Lost Update 궁극 방어] GlobalThrottle.get_file_lock 팩트 래핑 및 .bak 자가 치유 폴백 이식
                 with GlobalThrottle.get_file_lock(state_file):
                     try:
                         with open(state_file, 'r', encoding='utf-8') as f:
@@ -212,7 +198,6 @@ class AvwapConsolePlugin:
                                 return json.loads(content)
                     except Exception:
                         pass
-                    
                     try:
                         bak_file = state_file + ".bak"
                         with open(bak_file, 'r', encoding='utf-8') as f:
@@ -221,14 +206,12 @@ class AvwapConsolePlugin:
                                 return json.loads(content)
                     except Exception:
                         pass
-                        
                     return {}
 
             state_data = await asyncio.wait_for(asyncio.to_thread(_read_state), timeout=5.0)
             is_shutdown = False
             
             if isinstance(state_data, dict):
-                # 🚨 MODIFIED: [State Mismatch 방어] 오늘 날짜인 경우에만 셧다운 및 완료 상태를 인정하여 과거 캐시 오염에 의한 무한 대기 패러독스 방어
                 if state_data.get('date') == today_est_date.strftime('%Y-%m-%d'):
                     is_shutdown = bool(state_data.get('shutdown', False))
                     
@@ -238,7 +221,6 @@ class AvwapConsolePlugin:
                     if bool(state_data.get('dumped', False)):
                         is_dump_cleared = True
 
-            # 🚨 MODIFIED: [SSOT 락온] 구형 캐시 파일(avwap_trade_state)의 지연된 수량을 무시하고 AssassinLedger에서 100% 팩트 도출
             from assassin_ledger import AssassinLedger
             a_ledger = await asyncio.wait_for(asyncio.to_thread(AssassinLedger), timeout=5.0)
             a_data = await _get_with_retry(a_ledger.get_ledger, t)
@@ -327,7 +309,6 @@ class AvwapConsolePlugin:
         else:
             msg += "▫️ 정규장 개장 대기 중...\n\n"
 
-        # 🚨 MODIFIED: [임무 완수 상태 명시적 디커플링 표출] 대기 중으로 표출되는 패러독스를 원천 차단하고 '목표가 도달 당일 퇴근'을 100% 팩트로 명시.
         if is_avwap_hybrid or is_assassin_active:
             if is_mission_complete:
                 msg += f"🏆 <b>[ 암살자(aVWAP) 1-Shot 교전망 (당일 임무 완수) ]</b>\n"
@@ -356,8 +337,9 @@ class AvwapConsolePlugin:
                 elif is_early_shutdown:
                     msg += f"▫️ 교전 상태: <b>OFF (프리장 미진입으로 인한 진입 차단 - 조기 퇴근)</b>\n"
                 else:
-                    if now_est.time() < datetime.time(4, 7):
-                        msg += f"▫️ 교전 상태: <b>ON (04:07 EST 타임쉴드 가동 중 - 관망)</b>\n"
+                    # 🚨 NEW: 04:30 이전 1분 유지 조건 분기 렌더링 락온
+                    if now_est.time() < datetime.time(4, 30):
+                        msg += f"▫️ 교전 상태: <b>ON (04:30 EST 이전 VWAP 1분 유지 감시 중)</b>\n"
                     else:
                         msg += f"▫️ 교전 상태: <b>ON (세션 VWAP 상향 돌파 요격 대기 중)</b>\n"
                 msg += f"▫️ 타격 예산: <b>${avwap_budget:,.2f}</b> (초과 시 팻핑거 방어)\n"
@@ -366,7 +348,6 @@ class AvwapConsolePlugin:
             else:
                 msg += f"▫️ 교전 상태: <b>OFF (수동 가동 대기)</b>\n"
 
-        # 🚨 MODIFIED: [Silent Death 붕괴 수술] 휴장일, 장마감, 새로고침 시 하드코딩된 NONE 파라미터를 동적 ticker_clean으로 100% 교체 락온 완료
         if is_holiday:
             keyboard.append([InlineKeyboardButton(f"💤 [{ticker_clean}] 증시 휴장일", callback_data=f"AVWAP_SET:REFRESH:{ticker_clean}")])
         elif status_code in ["CLOSE"]:
@@ -390,6 +371,25 @@ class AvwapConsolePlugin:
         current_tickers = current_tickers or []
         safe_tickers = [html.escape(str(t)) for t in current_tickers if isinstance(t, str)]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재 가동중: <b>{', '.join(safe_tickers)}</b>", InlineKeyboardMarkup(keyboard)
+
+    def get_avwap_warning_menu(self, ticker):
+        safe_t = html.escape(str(ticker))
+        
+        msg = f"👁️ <b>[{safe_t} 순수 돌파/추종 데이 트레이딩 관제탑 가동 승인]</b>\n\n"
+        msg += "⚠️ <b>[ 수동 제어 및 팻핑거 뇌관 100% 소각 완료 ]</b>\n"
+        msg += "과거의 복잡했던 휩소 방어(HA 컨펌) 및 수동 목표가/수익률 설정 로직은 시스템 전역에서 영구 소각되었습니다.\n\n"
+        msg += "본 모드는 <b>수학적 팩트</b>에 기반한 <b>순수 돌파/추종 (1-Shot 1-Kill)</b> 아키텍처로 자동 가동됩니다.\n\n"
+        # 🚨 NEW: 04:30 이전 1분 유지 조건 메뉴 텍스트 롤오버 락온
+        msg += f"▫️ <b>타점:</b> <b>04:00~04:30 EST</b> 구간은 VWAP 상회 <b>1분 유지 시</b> 진입, <b>04:30 이후</b> 즉각 상향 돌파 요격 (매도 1호가 지정가)\n"
+        msg += f"▫️ <b>익절:</b> 진입 평단가 기준 <b>+1.0% 고정 지정가</b> 전량 매도망 100% 자동 장전\n"
+        msg += "▫️ <b>방어:</b> 15:59 EST 도달 시 미체결 덫 취소 및 매수 1호가 스윕 <b>강제 덤핑 (제로-오버나이트)</b>\n\n"
+        msg += "포트폴리오 매니저의 관제탑 가동 승인을 대기합니다."
+        
+        keyboard = [
+            [InlineKeyboardButton("👁️ 관제탑 락온(Lock-on) 가동 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
+            [InlineKeyboardButton("❌ 작전 취소 (안전 모드 유지)", callback_data="RESET:CANCEL")]
+        ]
+        return msg, InlineKeyboardMarkup(keyboard)
 
     def format_log_report(self, error_logs):
         error_logs = error_logs or []

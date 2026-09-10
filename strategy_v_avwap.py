@@ -3,6 +3,7 @@
 # ==========================================================
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [API Thundering Herd 방어] YF API 호출 직전 time.sleep(0.06) 땜질 코드를 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제 락온.
+# 🚨 NEW: [04:30 타임쉴드 조건부 해제망 결속] 04:07 절대 진입 금지를 영구 소각하고, 04:00~04:30 구간은 '1분 연속 VWAP 상회' 시 진입, 04:30 이후는 '즉각 상향 돌파' 시 진입하도록 하이브리드 타점 추적망 100% 락온 완료.
 # ==========================================================
 import logging
 import datetime
@@ -117,7 +118,6 @@ class VAvwapHybridPlugin:
         today_str = self._get_logical_date_str(now_est)
 
         merged_data = {'date': today_str}
-        # 본래 state_data 갱신을 원한다면 merged_data.update(state_data) 도 고려하나, 기존 코드를 유지합니다.
 
         # 🚨 MODIFIED: File Mutex 락온
         with GlobalThrottle.get_file_lock(file_path):
@@ -243,8 +243,6 @@ class VAvwapHybridPlugin:
 
         if curr_t < datetime.time(4, 0):
             return _build_res('OBSERVING', '개장 전 대기 (04:00 이전)')
-        elif curr_t < datetime.time(4, 7):
-            return _build_res('OBSERVING', '타임쉴드 가동 중 (04:07 해제 대기)')
         elif curr_t < datetime.time(9, 30):
             session_name = "1세션(프리장)"
             start_time_str = '040000'
@@ -260,6 +258,7 @@ class VAvwapHybridPlugin:
         avwap_avg_price = self._safe_float(avwap_avg_price)
 
         session_vwap = 0.0
+        df_session_valid = False
         if df_1min_exec is not None and not df_1min_exec.empty and 'time_est' in df_1min_exec.columns:
             df_today = df_1min_exec[df_1min_exec.index.date == today_est_date].copy()
             df_session = df_today[(df_today['time_est'] >= start_time_str) & (df_today['time_est'] <= end_time_str)].copy()
@@ -279,6 +278,7 @@ class VAvwapHybridPlugin:
                     session_vwap = self._safe_float(vol_tp.sum() / c_vol)
                 else:
                     session_vwap = self._safe_float(tp.mean())
+                df_session_valid = True
 
         if session_vwap <= 0.0:
             return _build_res('OBSERVING', f'{session_name} 실시간 VWAP 연산 대기중')
@@ -290,7 +290,18 @@ class VAvwapHybridPlugin:
             if curr_t >= datetime.time(9, 30):
                 return _build_res('OBSERVING', '프리장 미진입으로 인한 진입 차단 (조기 퇴근)', tp=session_vwap, session_vwap=session_vwap)
 
-            if exec_curr_p >= session_vwap:
-                return _build_res('BREAKOUT_BUY', f'{session_name} 실시간 VWAP(${session_vwap:.2f}) 상향 돌파 요격 인가', tp=session_vwap, session_vwap=session_vwap)
+            # 🚨 NEW: [타임쉴드 해제 및 하이브리드 타점 락온] 04:00~04:30은 1분 유지, 이후는 즉각 돌파 판별
+            if curr_t < datetime.time(4, 30):
+                if df_session_valid and len(df_session) >= 2:
+                    is_sustained = (self._safe_float(df_session['low'].iloc[-2]) > session_vwap) and (self._safe_float(df_session['low'].iloc[-1]) > session_vwap)
+                    if is_sustained and exec_curr_p >= session_vwap:
+                        return _build_res('BREAKOUT_BUY', f'{session_name} 04:30 이전 VWAP 1분 상회 검증 완료', tp=session_vwap, session_vwap=session_vwap)
+                    else:
+                        return _build_res('OBSERVING', f'{session_name} 04:30 이전 VWAP 1분 상회 조건 감시 중', tp=session_vwap, session_vwap=session_vwap)
+                else:
+                    return _build_res('OBSERVING', f'{session_name} 초기 1분봉 데이터 축적 중', tp=session_vwap, session_vwap=session_vwap)
             else:
-                return _build_res('OBSERVING', f'{session_name} 실시간 VWAP(${session_vwap:.2f}) 하회 중 (돌파 감시)', tp=session_vwap, session_vwap=session_vwap)
+                if exec_curr_p >= session_vwap:
+                    return _build_res('BREAKOUT_BUY', f'{session_name} 실시간 VWAP(${session_vwap:.2f}) 상향 돌파 요격 인가', tp=session_vwap, session_vwap=session_vwap)
+                else:
+                    return _build_res('OBSERVING', f'{session_name} 실시간 VWAP(${session_vwap:.2f}) 하회 중 (돌파 감시)', tp=session_vwap, session_vwap=session_vwap)

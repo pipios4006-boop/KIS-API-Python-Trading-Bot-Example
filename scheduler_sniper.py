@@ -4,16 +4,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API 및 모든 통신 전 하드코딩된 await asyncio.sleep(0.06) 땜질을 영구 소각하고, await asyncio.to_thread(GlobalThrottle.wait_api_sync)로 100% 락온.
 # 🚨 MODIFIED: [스케줄러 병목 붕괴 궁극 수술] 스나이퍼 매수/매도 검증 루프 내에 기생하던 불필요한 다중 폴링 대기열(sleep 1.0 * 3회)을 단 1회(sleep 2.0) 타격 판별로 진공 압축하여 55초 TimeoutError 연쇄 폭발을 원천 봉쇄.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 try-except 래핑 및 동기 I/O 블로킹을 _retry_api 단일 래퍼로 100% 통합.
-# 🚨 MODIFIED: [부분 체결 동적 차감 수술] 암살자 매도 덫이 전량 체결되지 않더라도 부분 체결(Partial Fill) 수량만큼 실시간으로 암살자 장부 및 상태 캐시에서 차감하여 SSOT 무결성 사수 완료.
-# 🚨 MODIFIED: [상태 기억 상실(State Amnesia) 붕괴 궁극 수술] JSONDecodeError 등으로 상태 캐시 파일이 비정상 초기화되는 현상을 원천 차단하기 위해 듀얼 세이프티(.bak) 원자적 백업 및 자가 치유(Self-Healing) 파이프라인 100% 결속.
-# 🚨 MODIFIED: [KST 타임라인 롤오버 맹점 수술] EST 기준 장중(예: 11:00 AM)에 KST 자정이 지나 날짜가 변경될 경우, 당일 체결 내역 조회 시 주문이 증발(Ghost Order)한 것으로 오인하는 KIS API 패러독스를 방어하기 위해 검색 기간을 D-2 ~ D-0으로 강제 확장.
-# 🚨 MODIFIED: [부활(Resurrection) 패러독스 차단] 암살자가 임무를 완수(전량 익절)하여 셧다운될 때, buy_odno 캐시도 원자적으로 초기화("")하여 덫이 부활하는 대참사 원천 봉쇄.
-# 🚨 MODIFIED: [암살자 팩트 타전 오염 수술] 15:59 EST 컷오프 시, 이미 전량 익절했거나 진입 실패로 퇴근(Shutdown)한 상태라면 허위 알림을 띄우지 않고 조용히 컷오프(Bypass)하도록 방어망 결속.
-# 🚨 MODIFIED: [State Overwrite Collision 영구 소각] 전량 익절 감지 시 분할되어 있던 상태 업데이트 파이프라인을 단일 트랜잭션으로 통합하여 last_filled_sell_qty 증발을 완벽히 차단.
-# 🚨 MODIFIED: [전역 락 병목 궁극 수술] _do_sniper 전체를 감싸고 있던 async with tx_lock: 족쇄를 영구 소각하여, vwap 스케줄러와 경합하며 55초 타임아웃을 유발하던 최악의 데드락을 100% 팩트 파기 완료.
-# 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자의 모든 매수/매도/덤핑 고유 주문번호(odno)를 상태 파일의 `history_odnos`에 원자적으로 누적(Append)하여, V-REV 정산 시 암살자 내역이 혼입되는 대참사를 원천 차단하는 투명 인간(Ghosting) 방어망 100% 결속.
-# 🚨 MODIFIED: [스레드 풀 고갈(Thread Leak) 궁극 수술] _retry_api의 `wait_for` 타임아웃을 하위 API 점유 한계(35초)를 상회하는 45.0초로 팩트 교정하여 좀비 스레드 누수를 100% 소각.
-# 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:07 타임쉴드 절대 준수 후 4연속 상회 시에만 매수 팩트 집행).
+# 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:30 이전 1분 유지 조건 및 이후 즉각 돌파 검증 후 4연속 상회 시에만 매수 팩트 집행).
 # ==========================================================
 import logging
 import datetime
@@ -63,7 +54,6 @@ def _write_json_atomic(file_path, data):
         os.replace(tmp_path, file_path)
         tmp_path = None
         
-        # 🚨 듀얼 세이프티 백업 생성
         bak_path = file_path + ".bak"
         bak_tmp_path = bak_path + ".tmp"
         try:
@@ -97,7 +87,7 @@ def _read_json_with_bak(file_path):
             content = f.read()
             if content.strip():
                 data = json.loads(content)
-                _write_json_atomic(file_path, data) # 자가 치유
+                _write_json_atomic(file_path, data) 
                 return data
     except Exception:
         pass
@@ -131,7 +121,6 @@ def _update_state_sync(ticker, now_est, updates):
             
         for k, v in updates.items():
             data[k] = v
-            # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자 주문번호 캐싱 (Ghosting 용도)
             if k in ['buy_odno', 'sell_odno', 'dump_odno'] and v:
                 if v not in data['history_odnos']:
                     data['history_odnos'].append(str(v))
@@ -164,9 +153,7 @@ async def _safe_send(context, chat_id, text, timeout=20.0, **kwargs):
         logging.error(f"🚨 텔레그램 전송 실패: {e}")
         return None
 
-# 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 15.0 -> 45.0 강제 하드캡
 async def _retry_api(func, *args, timeout=45.0, default=None, **kwargs):
-    # 🚨 MODIFIED: [제1헌법 준수 및 병목 소각] 파편화된 sleep 영구 삭제, 중앙 통제소 비동기 격리 100% 락온
     for attempt in range(3):
         try:
             await asyncio.to_thread(GlobalThrottle.wait_api_sync)
@@ -198,7 +185,6 @@ async def scheduled_sniper_monitor(context):
     is_open = False
     for attempt in range(3):
         try:
-            # 🚨 MODIFIED: 10.0 -> 45.0
             is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=45.0)
             break
         except asyncio.TimeoutError:
@@ -223,7 +209,6 @@ async def scheduled_sniper_monitor(context):
     
     kst_zone = ZoneInfo('Asia/Seoul')
     now_kst = datetime.datetime.now(kst_zone)
-    # 🚨 D-2 ~ D-0 KST 확장 락온 유지
     kis_search_start = (now_kst - datetime.timedelta(days=2)).strftime('%Y%m%d')
     query_end_dt = now_kst.strftime('%Y%m%d')
     
@@ -275,16 +260,13 @@ async def scheduled_sniper_monitor(context):
             except Exception: pass
         
         try:
-            # 🚨 MODIFIED: 5.0 -> 45.0
             await asyncio.wait_for(asyncio.to_thread(_clean_sniper_caches), timeout=45.0)
         except Exception as e:
             logging.error(f"🚨 [sniper_monitor] 로컬 스나이퍼 캐시 청소 타임아웃/에러: {e}")
 
     async def _do_sniper():
-        # 🚨 MODIFIED: 5.0 -> 45.0
         assassin_ledger = await asyncio.wait_for(asyncio.to_thread(AssassinLedger), timeout=45.0)
 
-        # 🚨 MODIFIED: [전역 락 병목 소각] async with tx_lock 족쇄 제거 완료
         cash_tuple = await _retry_api(broker.get_account_balance)
         if not cash_tuple: return
         
@@ -293,18 +275,16 @@ async def scheduled_sniper_monitor(context):
         safe_holdings = holdings if isinstance(holdings, dict) else {}
         
         try:
-            # 🚨 MODIFIED: 5.0 -> 45.0
             active_tickers = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=45.0) or []
         except Exception:
             active_tickers = []
         
         for t in active_tickers:
             try:
-                await asyncio.sleep(1.5) # 🚨 Case 43: TPS 밴 방어용 인터벌
+                await asyncio.sleep(1.5)
                 target_base = base_map.get(t, 'SOXX')
 
                 try:
-                    # 🚨 MODIFIED: 5.0 -> 45.0 하드캡핑 팩트 전진 배치
                     version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=45.0)
                     is_avwap_hybrid = await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_avwap_hybrid_mode', lambda x: False), t), timeout=45.0)
                     user_budget = await _retry_api(getattr(cfg, 'get_avwap_budget', lambda x: 10000.0), t, default=10000.0)
@@ -317,12 +297,10 @@ async def scheduled_sniper_monitor(context):
                     is_overnight_allowed = False
                
                 if version == "V_REV" and is_avwap_hybrid and t == "SOXL":
-                    # 🚨 MODIFIED: 10.0 -> 45.0
                     t_state = await asyncio.wait_for(asyncio.to_thread(_read_state_sync, t, now_est), timeout=45.0)
                     curr_t_obj = now_est.time()
                 
                     if curr_t_obj >= datetime.time(15, 59, 0) and not t_state.get('dumped'):
-                        # 🚨 MODIFIED: 이미 퇴근/관망 상태라면 조용히 컷오프
                         if t_state.get('shutdown') or (t_state.get('qty', 0) == 0 and not t_state.get('buy_odno')):
                             await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'dumped': True}), timeout=45.0)
                             continue
@@ -378,7 +356,6 @@ async def scheduled_sniper_monitor(context):
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"💥 <b>[{html.escape(t)}] 15:59 제로-오버나이트 강제 청산</b>\n▫️ 암살자 미체결 익절망을 취소하고 잔여 물량({dump_qty}주)을 매수 1호가 지정가(${dump_price:.2f})로 전량 스윕(Sweep) 덤핑하여 계좌를 100% 현금화했습니다.{fallback_msg}\n▫️ 암살자 독립 장부가 소각되었습니다.", parse_mode='HTML')
                                     
-                                    # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 강제 덤핑 주문번호도 Ghosting 망에 주입
                                     await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': 0, 'buy_odno': "", 'sell_odno': "", 'shutdown': True, 'dumped': True, 'dump_odno': dump_odno}), timeout=45.0)
                                 else:
                                     logging.error(f"🚨 [{t}] 15:59 강제 덤핑 실패: {d_res}")
@@ -450,7 +427,6 @@ async def scheduled_sniper_monitor(context):
                                 if chat_id:
                                     await _safe_send(context, chat_id, f"🕸️ <b>[{html.escape(t)}] +1.0% 고정 익절망 장전 완료</b>\n▫️ 목표 지정가: ${sell_price:.2f} (독립 장부 수량 {t_state['qty']}주)", parse_mode='HTML')
 
-                    # 🚨 MODIFIED: [부분 체결 동적 차감 및 롤오버 맹점 수술 스캔망]
                     t_state = await asyncio.wait_for(asyncio.to_thread(_read_state_sync, t, now_est), timeout=45.0)
                     if t_state.get('sell_odno') and t_state.get('qty') > 0:
                         exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
@@ -470,7 +446,6 @@ async def scheduled_sniper_monitor(context):
                                 if chat_id:
                                     await _safe_send(context, chat_id, f"💥 <b>[{html.escape(t)}] 암살자 덫 부분 체결 (Partial Fill)</b>\n▫️ 익절 물량: {new_fill_diff}주 체결 완료\n▫️ 장부 잔여 물량: {remaining_qty}주 계속 감시 중", parse_mode='HTML')
                             else:
-                                # 🚨 MODIFIED: [State Overwrite Collision 파기] 전량 익절 시 셧다운과 잔여 수량 갱신을 단일 트랜잭션으로 통합.
                                 await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {
                                     'qty': 0, 
                                     'last_filled_sell_qty': filled_qty, 
@@ -507,7 +482,7 @@ async def scheduled_sniper_monitor(context):
                                     logging.info(f"⏳ [{t}] 소프트웨어 트리거 중복 발사 방지 락온 가동")
                                     continue
                                 
-                                # 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:07 절대 타임쉴드는 get_avwap_decision 내부에서 기 방어 완료)
+                                # 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:30 이전 1분 유지 조건 및 이후 즉각 돌파 검증 후 4연속 상회 시에만 매수 팩트 집행).
                                 session_vwap = decision.get('session_vwap', 0.0)
                                 whipsaw_detected = False
                                 
@@ -600,14 +575,13 @@ async def scheduled_sniper_monitor(context):
                 if action == "BUY" and not is_rev and not sniper_buy_locked and master_switch != "UP_ONLY":
                     qty = res.get("qty", 0)
                     if qty > 0:
-                        # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 2초 대기 1회 폴링으로 팩트 압축
                         await _retry_api(broker.cancel_targeted_orders, t, "BUY", "00")
                         await asyncio.sleep(0.5)
                         
                         unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
                         safe_unfilled = unfilled if isinstance(unfilled, list) else []
                         if any(isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '02' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' for o in safe_unfilled):
-                            continue # 🚨 진행 중인 취소가 있으면 다음 분(Minute)으로 패스하여 병목 원천 차단
+                            continue
                         
                         ask_price = _safe_float(await _retry_api(broker.get_ask_price, t))
                         exec_price = ask_price if ask_price > 0 else limit_p
@@ -620,7 +594,7 @@ async def scheduled_sniper_monitor(context):
                             kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
                             query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
                             
-                            await asyncio.sleep(2.0) # 🚨 체결 반영 대기 (단 1회)
+                            await asyncio.sleep(2.0)
                             
                             unfilled_check = await _retry_api(broker.get_unfilled_orders_detail, t)
                             safe_unfilled_check = unfilled_check if isinstance(unfilled_check, list) else []
@@ -701,14 +675,13 @@ async def scheduled_sniper_monitor(context):
                 if is_upward_active and action in ["SELL_QUARTER", "SELL_JACKPOT"]:
                     qty = res.get("qty", 0)
                     if qty > 0:
-                        # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 2초 대기 1회 폴링으로 팩트 압축
                         await _retry_api(broker.cancel_targeted_orders, t, "SELL", "00")
                         await asyncio.sleep(0.5)
                         
                         unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
                         safe_unfilled = unfilled if isinstance(unfilled, list) else []
                         if any(isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '01' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' for o in safe_unfilled):
-                            continue # 🚨 진행 중인 취소가 있으면 다음 분(Minute)으로 패스하여 병목 원천 차단
+                            continue 
       
                         bid_price = _safe_float(await _retry_api(broker.get_bid_price, t))
                         exec_price = bid_price if bid_price > 0 else limit_p
@@ -736,7 +709,7 @@ async def scheduled_sniper_monitor(context):
                             kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
                             query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
                             
-                            await asyncio.sleep(2.0) # 🚨 체결 반영 대기 (단 1회)
+                            await asyncio.sleep(2.0) 
                             
                             unfilled_check = await _retry_api(broker.get_unfilled_orders_detail, t)
                             safe_unfilled_check = unfilled_check if isinstance(unfilled_check, list) else []
@@ -770,7 +743,7 @@ async def scheduled_sniper_monitor(context):
                                     msg = f"🦇 <b>[{html.escape(str(t))}] V14 스나이퍼 상방 기습({action}) 명중!</b>\n▫️ 타겟가: ${limit_p:.2f}\n▫️ 팩트 단가: ${display_price:.2f}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 상방 감시망이 잠깁니다 (하방 독립 유지)."
                                     await _safe_send(context, chat_id, msg, parse_mode='HTML')
                         else:
-                            err_msg = html.escape(str(order_res.get('msg1') or '응답 없음')) if isinstance(order_res, dict) else '통 장애'
+                            err_msg = html.escape(str(order_res.get('msg1') or '응답 없음')) if isinstance(order_res, dict) else '통신 장애'
                             logging.error(f"🚨 [{t}] V14 스나이퍼 상방 기습 서버 거절: {err_msg}")
                             reject_msg = (
                                 f"🚨 <b>[{html.escape(str(t))}] V14 스나이퍼 상방 기습 서버 거절 (Reject)!</b>\n"
@@ -784,8 +757,6 @@ async def scheduled_sniper_monitor(context):
                 continue
 
     try:
-        # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 1분(60초) 인터벌 스킵(maximum instances reached)을 원천 차단하기 위해 240초 캡을 55초로 팩트 교정 완료
         await asyncio.wait_for(_do_sniper(), timeout=55.0)
     except Exception as e:
         logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)
-
