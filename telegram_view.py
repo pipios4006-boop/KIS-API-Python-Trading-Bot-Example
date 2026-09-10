@@ -13,6 +13,7 @@
 # 🚨 NEW: [큐 장부 매뉴얼 이식] get_queue_management_menu 화면에 추가/삭제/수정 등 수동 조작을 위한 명령어 가이드 표출 기능 팩트 결속.
 # 🚨 NEW: [암살자 독립 소각망 결속] get_reset_menu에 암살자 전용 소각 버튼 추가 및 get_avwap_reset_confirm_menu 팩트 주입 완료.
 # 🚨 MODIFIED: [퇴근 모드 UI 버튼 증발 누수 수술] 당일 매매가 잠금(is_locked=True) 상태일 경우 수동 개입(팻핑거) 버튼을 완벽히 은닉(Bypass)하여 렌더링 무결성 사수 완료.
+# 🚨 MODIFIED: [퇴근 모드 텍스트 롤오버] 엔진 셧다운 시 "15:27 슬라이싱 대기" 텍스트를 "슬라이싱 셧다운 완료"로 오버라이드 팩트 락온.
 # ==========================================================
 import os
 import math
@@ -523,8 +524,14 @@ class TelegramView:
                         sn_target = safe_star_price if is_rev_logic else max(safe_star_price, math.ceil(safe_avg * 1.005 * 100) / 100.0)
                         if sn_target > 0: body_msg += f"🎯 상방 스나이퍼: ${sn_target:.2f} 이상 대기\n"
             else:
-                body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
-                body_msg += "⏱️ <b>스케줄:</b> 15:26 EST 로컬 엔진 스탠바이 ➔ 15:27 슬라이싱 타격 (자전거래 차단)\n" 
+                # 🚨 MODIFIED: [퇴근 모드 팩트 렌더링] 잠금 상태일 경우 스케줄 텍스트 오버라이드
+                is_locked_chk = t_info.get('is_locked', False)
+                if is_locked_chk:
+                    body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 퇴근 완료</b>\n"
+                    body_msg += "⏱️ <b>상태:</b> 당일 매매 잠금(REG Lock) 및 슬라이싱 셧다운\n" 
+                else:
+                    body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
+                    body_msg += "⏱️ <b>스케줄:</b> 15:26 EST 로컬 엔진 스탠바이 ➔ 15:27 슬라이싱 타격 (자전거래 차단)\n" 
             
             if v_mode == "V_REV":
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
