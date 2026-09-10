@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [스케줄러 타임아웃 연쇄 폭발 궁극 수술] 3단 지수 백오프 대기 시간 누적으로 인해 300초 전역 타임아웃을 돌파해버리는 대참사를 막기 위해 600초로 타임아웃 상한(Capping)을 확장 결속 완료.
 # 🚨 MODIFIED: [TimeoutError 침묵 패러독스 수술] 파이썬 내장 TimeoutError 발생 시 str(e)가 빈 문자열("")을 반환하여 텔레그램 타전망에 사유가 누락되는 현상을 100% 원천 봉쇄(type(e).__name__ 폴백 결속).
 # 🚨 NEW: [스레드 풀 고갈(Thread Leak) 궁극 수술] 하위 KIS 통신 지연(최대 35초) 시 상위 `wait_for`가 10~15초 만에 코루틴을 취소시켜 발생하는 '좀비 스레드 누적 및 교착(Deadlock)' 대참사를 원천 봉쇄하기 위해, 모든 비동기 I/O 래퍼의 타임아웃을 45.0초로 상향 팩트 하드 캡핑 완료.
+# 🚨 MODIFIED: [오인 패러독스 방어] 15:26 EST 본진 덫 투하 기상 시, 가동할 V-REV 종목이 모두 매매 잠금(is_locked=True) 상태로 퇴근했다면 맹목적인 "투하 개시" 브로드캐스트를 전면 묵살하고 스케줄러 자체를 조용히 바이패스(Bypass)하도록 팩트 방어막 결속 완료.
 # ==========================================================
 import logging
 import datetime
@@ -18,6 +19,7 @@ import asyncio
 import random
 import html
 import math
+import functools
 
 from scheduler_core import is_market_open, get_budget_allocation
 from order_executor import execute_order_list
@@ -31,6 +33,22 @@ def _safe_float(val):
         return f_val
     except Exception:
         return 0.0
+
+async def _retry_api(func, *args, timeout=45.0, default=None, **kwargs):
+    for attempt in range(3):
+        try:
+            if asyncio.iscoroutinefunction(func):
+                return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout)
+            else:
+                p_func = functools.partial(func, *args, **kwargs)
+                return await asyncio.wait_for(asyncio.to_thread(p_func), timeout=timeout)
+        except Exception as e:
+            if attempt == 2:
+                func_name = getattr(func, '__name__', 'unknown_func')
+                logging.debug(f"🚨 API 래퍼 최종 실패 ({func_name}): {e}")
+                return default
+            await asyncio.sleep(1.0 * (2 ** attempt))
+    return default
 
 async def scheduled_early_regular_trade(context):
     is_open = False
@@ -414,6 +432,25 @@ async def scheduled_regular_trade_delayed(context):
     chat_id = getattr(job, 'chat_id', None)
     
     if tx_lock is None:
+        return
+        
+    # 🚨 MODIFIED: [오인 패러독스 방어] 모든 V-REV 종목이 이미 락업(퇴근) 상태라면 무의미한 15:26 기상 메시지 발송을 원천 차단하고 즉각 스케줄러 셧다운.
+    try:
+        active_tickers_list = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=45.0) or []
+    except Exception:
+        active_tickers_list = []
+        
+    any_unlocked_vrev = False
+    for t in active_tickers_list:
+        is_locked = await _retry_api(cfg.check_lock, t, "REG", default=False)
+        ver = await _retry_api(cfg.get_version, t, default="V14")
+        is_manual_vwap = await _retry_api(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t, default=False)
+        if not is_locked and (ver == "V_REV" or (ver == "V14" and is_manual_vwap)):
+            any_unlocked_vrev = True
+            break
+            
+    if not any_unlocked_vrev:
+        logging.info("💤 [regular_delayed] 가동 가능한 V-REV(또는 VWAP) 종목이 없거나 이미 퇴근(Lock)하여 15:26 투하 스케줄을 완전히 바이패스합니다.")
         return
     
     jitter_seconds = random.randint(0, 45)

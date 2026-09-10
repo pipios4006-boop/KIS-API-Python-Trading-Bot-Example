@@ -7,12 +7,14 @@
 # 🚨 MODIFIED: [Buy High, Sell Low 패러독스 궁극 수술] 매수 체결 직후 거시적 VWAP 이탈률만 보고 손실 덤핑을 유발하던 맹독성 '상방 매도 하이재킹(Upward Sell Hijack)' 로직 및 연계 플래그를 시스템 전역에서 100% 영구 소각 완료.
 # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 1분(60초) 인터벌 태스크가 지연되어 다음 틱이 스킵(maximum instances reached)되는 패러독스를 원천 차단하기 위해 전역 타임아웃을 120초에서 55초로 하드 캡핑.
 # 🚨 NEW: [스레드 풀 고갈(Thread Leak) 궁극 수술] 달력 스캔 등 하위 KIS 통신 지연 시 10초 만에 코루틴을 취소시켜 발생하는 '좀비 스레드 누적' 대참사를 원천 봉쇄하기 위해, 모든 비동기 I/O 래퍼의 타임아웃을 45.0초로 상향 팩트 하드 캡핑 완료.
+# 🚨 MODIFIED: [오인 패러독스 방어] scheduled_vwap_init_and_cancel 기상 시 당일 매매가 이미 잠금(is_locked) 상태일 경우, 맹목적인 '엔진 기상' 메시지 대신 '셧다운(퇴근 완료)' 팩트를 타전하도록 브로드캐스트 라우팅 교정 완료.
 # ==========================================================
 import logging
 import datetime
 from zoneinfo import ZoneInfo
 import asyncio
 import pandas_market_calendars as mcal
+import html
 
 from scheduler_core import is_market_open
 from vwap_core_engine import execute_vwap_init, execute_vwap_trade
@@ -49,6 +51,31 @@ async def _get_market_close_time(now_est):
             return now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         else:
             return None
+
+async def _retry_api(func, *args, timeout=45.0, default=None, **kwargs):
+    import functools
+    for attempt in range(3):
+        try:
+            if asyncio.iscoroutinefunction(func):
+                return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout)
+            else:
+                p_func = functools.partial(func, *args, **kwargs)
+                return await asyncio.wait_for(asyncio.to_thread(p_func), timeout=timeout)
+        except Exception as e:
+            if attempt == 2:
+                func_name = getattr(func, '__name__', 'unknown_func')
+                logging.debug(f"🚨 API 래퍼 최종 실패 ({func_name}): {e}")
+                return default
+            await asyncio.sleep(1.0 * (2 ** attempt))
+    return default
+
+async def _safe_send(context, chat_id, text, timeout=45.0, **kwargs):
+    if not chat_id: return None
+    try:
+        return await asyncio.wait_for(context.bot.send_message(chat_id=chat_id, text=text, **kwargs), timeout=timeout)
+    except Exception as e:
+        logging.error(f"🚨 텔레그램 전송 실패: {e}")
+        return None
 
 async def scheduled_vwap_init_and_cancel(context):
     est = ZoneInfo('America/New_York')
@@ -104,7 +131,38 @@ async def scheduled_vwap_init_and_cancel(context):
         vwap_cache.clear()
         vwap_cache['date'] = today_str
             
+    # 🚨 MODIFIED: [오인 패러독스 차단] 기상 시 락(Lock) 상태를 사전 교차 검증하여 팩트 기반 퇴근 브리핑 락온
     try:
+        active_tickers = await _retry_api(cfg.get_active_tickers, default=[])
+        if isinstance(active_tickers, str): active_tickers = [active_tickers]
+        elif not isinstance(active_tickers, list): active_tickers = []
+        
+        for raw_t in active_tickers:
+            t = str(raw_t).strip().upper()
+            if not t: continue
+            
+            try:
+                version = await _retry_api(cfg.get_version, t, default="V14")
+                is_manual_vwap = await _retry_api(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t, default=False)
+                is_locked = await _retry_api(cfg.check_lock, t, "REG", default=False)
+                
+                if version == "V_REV" or (version == "V14" and is_manual_vwap):
+                    if not vwap_cache.get(f"REV_{t}_nuked"):
+                        if is_locked:
+                            msg = f"🌅 <b>[{html.escape(str(t))}] 자체 1분 슬라이싱 VWAP 엔진 셧다운 (퇴근 완료)</b>\n"
+                            msg += f"▫️ 수동 개입 등으로 당일 매매 잠금(REG Lock)이 감지되어 로컬 펄스 타격 엔진을 가동하지 않습니다."
+                        else:
+                            msg = f"🌅 <b>[{html.escape(str(t))}] 자체 1분 슬라이싱 VWAP 엔진 기상</b>\n"
+                            msg += f"▫️ KIS 예약 덫 관망 및 장 마감 34분 전 로컬 펄스 타격 엔진의 가동 대기를 확인했습니다.\n"
+                            if version == "V_REV":
+                                msg += f"▫️ 운용종목 갭 이탈 감지 시 즉각 개입(Gap Hijack)하는 폭락장 스윕 모드가 함께 가동됩니다. ⚔️"
+
+                        vwap_cache[f"REV_{t}_nuked"] = True
+                        await _safe_send(context, chat_id, msg, parse_mode='HTML', disable_notification=True)
+            except Exception as e:
+                logging.error(f"🚨 [{t}] 관측 모드 샌드박스 에러 (격리 완료): {e}")
+                vwap_cache[f"REV_{t}_nuked"] = False 
+
         await asyncio.wait_for(
             execute_vwap_init(tx_lock, cfg, broker, chat_id, context, vwap_cache), 
             timeout=55.0
