@@ -12,6 +12,7 @@
 # 🚨 NEW: [유령 졸업(Ghost Graduation) 패러독스 궁극 수술] 주말(토, 일)이나 휴일에 16:05 확정 정산 또는 자정 루프가 가동될 때, 과거 금요일의 체결 내역을 당일 실적으로 오인하여 0주 잔고 상태에서 매일 무한정 졸업 카드를 복제 발행하던 맹독성 버그를 원천 차단하기 위해, 체결 내역 필터링 및 졸업 트리거 검증 시 '실제 영업일(Today) 당일 팩트'인지 검증하는 `is_today_trading_day` 타임라인 방어막을 100% 팩트 결속 완료.
 # 🚨 MODIFIED: [SyntaxError 즉사 버그 소각] 이전 버전에서 오타로 주입된 괄호 불일치(r.get('ticker']) 등 15개 맹독성 코드를 r.get('ticker')로 100% 원상 복구 완료.
 # 🚨 NEW: [스레드 풀 고갈(Thread Leak) 궁극 수술] 하위 KIS 통신 지연(최대 35초) 시 상위 `wait_for`가 코루틴을 취소시켜 발생하는 '좀비 스레드 누적' 대참사를 원천 봉쇄하기 위해, 모든 비동기 I/O 래퍼의 타임아웃을 45.0초로 상향 팩트 하드 캡핑 완료.
+# 🚨 MODIFIED: [타임라인 롤오버(Timeline Rollover) 패러독스 방어] 16:05 정산 시 prev_close가 당일 종가로 롤오버되어 큐 장부의 1층 정량이 비정상적으로 팽창하던 치명적 결함을 막기 위해, YF 과거 일봉을 핀셋 추출하여 100% 무결성 팩트 타점(safe_prev_c)을 주입하도록 파이프라인 교정 완료.
 # ==========================================================
 
 import logging
@@ -536,16 +537,35 @@ class TelegramSyncEngine:
                         calibrated = False
                         if getattr(self, 'queue_ledger', None):
                             safe_prev_c = 0.0
-                            for attempt in range(3):
+                            # 🚨 MODIFIED: [타임라인 롤오버 패러독스 방어] 16:05 확정 정산 시 큐 장부 동기화에 주입되는 prev_close가 당일 종가로 롤오버되는 현상을 막기 위해, YF 과거 일봉 핀셋 추출을 통한 100% 무결성 팩트 타점을 주입합니다.
+                            def _get_factual_prev_c():
+                                GlobalThrottle.wait_api_sync()
                                 try:
-                                    GlobalThrottle.wait_api_sync()
-                                    # 🚨 MODIFIED: 10.0 -> 45.0
-                                    p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=45.0)
-                                    safe_prev_c = self._safe_float(p_val)
-                                    if safe_prev_c > 0: break
-                                except Exception:
-                                    if attempt == 2: pass
-                                    else: await asyncio.sleep(1.0 * (2 ** attempt))
+                                    df = yf.Ticker(ticker).history(period="15d", interval="1d", timeout=5)
+                                    if not df.empty:
+                                        est_tz = ZoneInfo('America/New_York')
+                                        if df.index.tzinfo is None:
+                                            df.index = df.index.tz_localize('UTC').tz_convert(est_tz)
+                                        else:
+                                            df.index = df.index.tz_convert(est_tz)
+                                        past_df = df[df.index.strftime('%Y-%m-%d') < target_ledger_str]
+                                        if not past_df.empty:
+                                            return float(past_df['Close'].iloc[-1])
+                                except Exception: pass
+                                return 0.0
+                            
+                            safe_prev_c = await self._retry_api(_get_factual_prev_c, timeout=45.0, default=0.0)
+                            
+                            if safe_prev_c <= 0.0:
+                                for attempt in range(3):
+                                    try:
+                                        GlobalThrottle.wait_api_sync()
+                                        p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=45.0)
+                                        safe_prev_c = self._safe_float(p_val)
+                                        if safe_prev_c > 0: break
+                                    except Exception:
+                                        if attempt == 2: pass
+                                        else: await asyncio.sleep(1.0 * (2 ** attempt))
                             
                             safe_seed = await self._retry_api(self.cfg.get_seed, ticker, default=0.0)
                             portion_budget = safe_seed * 0.15
@@ -558,7 +578,7 @@ class TelegramSyncEngine:
                                 actual_clear_price_for_sync,
                                 prev_close=safe_prev_c,
                                 portion_budget=portion_budget,
-                                timeout=45.0, # 🚨 MODIFIED: 10.0 -> 45.0
+                                timeout=45.0,
                                 default=False
                             )
                          

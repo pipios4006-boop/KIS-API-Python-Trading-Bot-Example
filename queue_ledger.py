@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 인스턴스 레벨 Lock 소각 및 시스템 전역 파일 Mutex(GlobalThrottle) 락온.
 # 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어 유지.
 # 🚨 MODIFIED: [Case 16] 원자적 쓰기(Atomic Write) 실패 시 임시 파일 스코프 고아화 방어 100% 사수 완료.
+# 🚨 MODIFIED: [풍선 효과 하드 캡핑 영구 소각] 2층으로 이관된 물량의 단가를 '기존 총 평단가'나 '1층 단가'로 강제 캡핑하여 총 투자금(Total Invested)을 증발시키던 맹독성 캡핑 코드를 시스템 전역에서 영구 소각. 이제 100% 팩트 수학적 역산 단가가 그대로 보존되어 단 1달러의 오차도 허용하지 않는 완벽한 장부가 구축됨.
 # ==========================================================
 import os
 import json
@@ -168,10 +169,7 @@ class QueueLedger:
                     
                     rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                     
-                    # 🚨 풍선 효과(Balloon Effect) 하드 캡핑 - 기존 총 평단가 초과 방어
-                    if rem_price > lot_price:
-                        rem_price = lot_price
-                        
+                    # 🚨 MODIFIED: [풍선 효과 하드 캡핑 영구 소각] 총 투자금(Total Invested)의 무결성을 훼손하여 장부상 손실을 유발하던 단일 지층 캡핑을 영구 삭제하고, 100% 팩트 역산 단가를 보존.
                     now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
                     
                     q[0] = {
@@ -198,7 +196,6 @@ class QueueLedger:
             if l1_qty != target_l1_qty:
                 total_qty = l1_qty + l2_qty
                 total_inv = (l1_qty * l1_price) + (l2_qty * l2_price)
-                original_total_avg = total_inv / total_qty if total_qty > 0 else 0.0
                 
                 # 1. 정량제 수량이 1층 매수수량이 되어야 합니다.
                 new_l1_qty = min(target_l1_qty, total_qty)
@@ -219,10 +216,7 @@ class QueueLedger:
                     new_l2_inv = total_inv - (new_l1_qty * new_l1_price)
                     new_l2_price = round(max(0.01, new_l2_inv / new_l2_qty), 4)
                     
-                    # 🚨 상향식 이관 시 풍선 효과(Balloon Effect) 하드 캡핑
-                    if l1_qty > target_l1_qty and new_l2_price > original_total_avg:
-                        new_l2_price = round(original_total_avg, 4)
-                    
+                    # 🚨 MODIFIED: [풍선 효과 하드 캡핑 역분출 영구 소각] 2층 단가를 강제 캡핑하여 1층 단가로 오염(침몰)시키던 맹독성 로직을 전면 파기하고, 100% 팩트 역산 단가를 보존.
                     l1["qty"] = new_l1_qty
                     l1["price"] = new_l1_price
                     
