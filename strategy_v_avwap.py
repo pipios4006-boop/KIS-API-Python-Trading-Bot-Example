@@ -2,8 +2,10 @@
 # FILE: strategy_v_avwap.py
 # ==========================================================
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
-# 🚨 MODIFIED: [API Thundering Herd 방어] YF API 호출 직전 time.sleep(0.06) 땜질 코드를 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제 락온.
+# 🚨 MODIFIED: [API Thundering Herd 방어] YF 모듈 통신 직전 time.sleep(0.06) 땜질 코드를 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제 락온.
 # 🚨 NEW: [04:07 타임쉴드 조건부 해제망 결속] 개장 직후 노이즈를 회피하기 위해 04:07까지 절대 진입 금지 락온. 04:07~04:30 구간은 '1분 연속 VWAP 상회' 시 진입, 04:30 이후는 '즉각 상향 돌파' 시 진입하도록 하이브리드 타점 추적망 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [_safe_float NameError 즉사 버그 완벽 수술] math.isinf(f_val) 오타로 인해 모든 수치가 0.0으로 반환되어 현재가 결측으로 단락 평가되던 치명적 결함을 math.isinf(val)로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [1분 유지 조건 헌법 공식 락온] 미완성 실시간 봉의 low 강제 검증을 소각하고, 직전 1분봉 저가(iloc[-2] > session_vwap) 및 실시간 현재가(exec_curr_p >= session_vwap) 교차 검증으로 무결점 복원 완료.
 # ==========================================================
 import logging
 import datetime
@@ -26,7 +28,8 @@ class VAvwapHybridPlugin:
     def _safe_float(self, value):
         try:
             val = float(str(value or 0.0).replace(',', ''))
-            if math.isnan(val) or math.isinf(f_val):
+            # 🚨 MODIFIED: [NameError 즉사 버그 수술] f_val -> val 교정 완료
+            if math.isnan(val) or math.isinf(val):
                 return 0.0
             return val
         except Exception:
@@ -291,11 +294,11 @@ class VAvwapHybridPlugin:
             if curr_t >= datetime.time(9, 30):
                 return _build_res('OBSERVING', '프리장 미진입으로 인한 진입 차단 (조기 퇴근)', tp=session_vwap, session_vwap=session_vwap)
 
-            # 🚨 NEW: [하이브리드 타점 락온] 04:07~04:30은 1분 유지 조건, 이후는 즉각 돌파 판별
+            # 🚨 MODIFIED: [하이브리드 타점 락온] 04:07~04:30 직전 1분봉 저가 > VWAP 및 실시간 현재가 >= VWAP 헌법 공식 팩트 교정
             if curr_t < datetime.time(4, 30):
                 if df_session_valid and len(df_session) >= 2:
-                    is_sustained = (self._safe_float(df_session['low'].iloc[-2]) > session_vwap) and (self._safe_float(df_session['low'].iloc[-1]) > session_vwap)
-                    if is_sustained and exec_curr_p >= session_vwap:
+                    is_sustained = (self._safe_float(df_session['low'].iloc[-2]) > session_vwap) and (exec_curr_p >= session_vwap)
+                    if is_sustained:
                         return _build_res('BREAKOUT_BUY', f'{session_name} 04:30 이전 VWAP 1분 상회 검증 완료', tp=session_vwap, session_vwap=session_vwap)
                     else:
                         return _build_res('OBSERVING', f'{session_name} 04:07~04:30 이전 VWAP 1분 상회 조건 감시 중', tp=session_vwap, session_vwap=session_vwap)
