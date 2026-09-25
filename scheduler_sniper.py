@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [스케줄러 병목 붕괴 궁극 수술] 스나이퍼 매수/매도 검증 루프 내에 기생하던 불필요한 다중 폴링 대기열(sleep 1.0 * 3회)을 단 1회(sleep 2.0) 타격 판별로 진공 압축하여 55초 TimeoutError 연쇄 폭발을 원천 봉쇄.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 try-except 래핑 및 동기 I/O 블로킹을 _retry_api 단일 래퍼로 100% 통합.
 # 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:30 이전 1분 유지 조건 및 이후 즉각 돌파 검증 후 4연속 상회 시에만 매수 팩트 집행).
+# 🚨 MODIFIED: [유령 잔고(Ghost Balance) 및 익절 누락 궁극 수술] 자전거래 방어로 인해 밀려난 과거 주문번호(history_odnos) 전반을 KIS 원장과 교차 검증하도록 매수/매도 추적망을 다중화하여, 1.0% 하드 락온 익절 퇴근 실패를 100% 원천 봉쇄.
 # ==========================================================
 import logging
 import datetime
@@ -378,10 +379,16 @@ async def scheduled_sniper_monitor(context):
                     if t_state.get('shutdown'):
                         continue
 
-                    if t_state.get('buy_odno') and t_state.get('qty') == 0:
+                    # 🚨 MODIFIED: [유령 잔고 매수 누락 궁극 수술] 매수 체결 추적망 다중화
+                    if (t_state.get('buy_odno') or t_state.get('history_odnos')) and t_state.get('qty') == 0:
                         exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                         safe_exec = exec_hist if isinstance(exec_hist, list) else []
-                        buy_execs = [ex for ex in safe_exec if str(ex.get('odno')) == t_state['buy_odno'] and ex.get('sll_buy_dvsn_cd') == '02']
+                        
+                        target_buy_odnos = set(t_state.get('history_odnos', []))
+                        if t_state.get('buy_odno'):
+                            target_buy_odnos.add(t_state.get('buy_odno'))
+                            
+                        buy_execs = [ex for ex in safe_exec if str(ex.get('odno')) in target_buy_odnos and ex.get('sll_buy_dvsn_cd') == '02']
                          
                         filled_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in buy_execs)
                         if filled_qty > 0:
@@ -397,10 +404,10 @@ async def scheduled_sniper_monitor(context):
                             unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
                             if unfilled is not None:
                                 safe_unfilled = unfilled if isinstance(unfilled, list) else []
-                                is_alive = any(str(uo.get('odno')) == t_state['buy_odno'] for uo in safe_unfilled)
+                                is_alive = any(str(uo.get('odno')) in target_buy_odnos for uo in safe_unfilled)
                                 
                                 if not is_alive:
-                                    logging.warning(f"🚨 [{t}] 암살자 덫 증발(Ghost Order) 감지! 상태를 강제 초기화합니다.")
+                                    logging.warning(f"🚨 [{t}] 암살자 매수 덫 증발(Ghost Order) 감지! 상태를 강제 초기화합니다.")
                                     await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'buy_odno': ""}), timeout=45.0)
 
                     a_ledger = await asyncio.wait_for(asyncio.to_thread(assassin_ledger.get_ledger, t), timeout=45.0)
@@ -428,10 +435,17 @@ async def scheduled_sniper_monitor(context):
                                     await _safe_send(context, chat_id, f"🕸️ <b>[{html.escape(t)}] +1.0% 고정 익절망 장전 완료</b>\n▫️ 목표 지정가: ${sell_price:.2f} (독립 장부 수량 {t_state['qty']}주)", parse_mode='HTML')
 
                     t_state = await asyncio.wait_for(asyncio.to_thread(_read_state_sync, t, now_est), timeout=45.0)
-                    if t_state.get('sell_odno') and t_state.get('qty') > 0:
+                    
+                    # 🚨 MODIFIED: [유령 잔고(Ghost Balance) 및 익절 누락 궁극 수술] 매도 추적망 다중화 결속
+                    if (t_state.get('sell_odno') or t_state.get('history_odnos')) and t_state.get('qty') > 0:
                         exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                         safe_exec = exec_hist if isinstance(exec_hist, list) else []
-                        sell_execs = [ex for ex in safe_exec if str(ex.get('odno')) == t_state['sell_odno'] and ex.get('sll_buy_dvsn_cd') == '01']
+                        
+                        target_sell_odnos = set(t_state.get('history_odnos', []))
+                        if t_state.get('sell_odno'):
+                            target_sell_odnos.add(t_state.get('sell_odno'))
+                            
+                        sell_execs = [ex for ex in safe_exec if str(ex.get('odno')) in target_sell_odnos and ex.get('sll_buy_dvsn_cd') == '01']
                         
                         filled_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs)
                         last_filled = t_state.get('last_filled_sell_qty', 0)
@@ -482,7 +496,6 @@ async def scheduled_sniper_monitor(context):
                                     logging.info(f"⏳ [{t}] 소프트웨어 트리거 중복 발사 방지 락온 가동")
                                     continue
                                 
-                                # 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:30 이전 1분 유지 조건 및 이후 즉각 돌파 검증 후 4연속 상회 시에만 매수 팩트 집행).
                                 session_vwap = decision.get('session_vwap', 0.0)
                                 whipsaw_detected = False
                                 
