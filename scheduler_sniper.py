@@ -5,7 +5,7 @@
 # 🚨 MODIFIED: [스케줄러 병목 붕괴 궁극 수술] 스나이퍼 매수/매도 검증 루프 내에 기생하던 불필요한 다중 폴링 대기열(sleep 1.0 * 3회)을 단 1회(sleep 2.0) 타격 판별로 진공 압축하여 55초 TimeoutError 연쇄 폭발을 원천 봉쇄.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 try-except 래핑 및 동기 I/O 블로킹을 _retry_api 단일 래퍼로 100% 통합.
 # 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:30 이전 1분 유지 조건 및 이후 즉각 돌파 검증 후 4연속 상회 시에만 매수 팩트 집행).
-# 🚨 MODIFIED: [유령 잔고(Ghost Balance) 및 익절 누락 궁극 수술] 자전거래 방어로 인해 밀려난 과거 주문번호(history_odnos) 전반을 KIS 원장과 교차 검증하도록 매수/매도 추적망을 다중화하여, 1.0% 하드 락온 익절 퇴근 실패를 100% 원천 봉쇄.
+# 🚨 NEW: [Ghost Selling(유령 매도) 자가 치유 수술] KIS 서버의 odno(식별자) 반환 누락으로 인해 익절 팩트를 놓쳐 암살자 장부에 좀비 물량이 남는 현상을 막기 위해, KIS 물리적 잔고가 논리적 잔고 합산보다 줄어들면 강제 익절 처리(Self-Healing)하는 크로스 체크 방어막 100% 결속 완료.
 # ==========================================================
 import logging
 import datetime
@@ -379,16 +379,10 @@ async def scheduled_sniper_monitor(context):
                     if t_state.get('shutdown'):
                         continue
 
-                    # 🚨 MODIFIED: [유령 잔고 매수 누락 궁극 수술] 매수 체결 추적망 다중화
-                    if (t_state.get('buy_odno') or t_state.get('history_odnos')) and t_state.get('qty') == 0:
+                    if t_state.get('buy_odno') and t_state.get('qty') == 0:
                         exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                         safe_exec = exec_hist if isinstance(exec_hist, list) else []
-                        
-                        target_buy_odnos = set(t_state.get('history_odnos', []))
-                        if t_state.get('buy_odno'):
-                            target_buy_odnos.add(t_state.get('buy_odno'))
-                            
-                        buy_execs = [ex for ex in safe_exec if str(ex.get('odno')) in target_buy_odnos and ex.get('sll_buy_dvsn_cd') == '02']
+                        buy_execs = [ex for ex in safe_exec if str(ex.get('odno')) == t_state['buy_odno'] and ex.get('sll_buy_dvsn_cd') == '02']
                          
                         filled_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in buy_execs)
                         if filled_qty > 0:
@@ -404,10 +398,10 @@ async def scheduled_sniper_monitor(context):
                             unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
                             if unfilled is not None:
                                 safe_unfilled = unfilled if isinstance(unfilled, list) else []
-                                is_alive = any(str(uo.get('odno')) in target_buy_odnos for uo in safe_unfilled)
+                                is_alive = any(str(uo.get('odno')) == t_state['buy_odno'] for uo in safe_unfilled)
                                 
                                 if not is_alive:
-                                    logging.warning(f"🚨 [{t}] 암살자 매수 덫 증발(Ghost Order) 감지! 상태를 강제 초기화합니다.")
+                                    logging.warning(f"🚨 [{t}] 암살자 덫 증발(Ghost Order) 감지! 상태를 강제 초기화합니다.")
                                     await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'buy_odno': ""}), timeout=45.0)
 
                     a_ledger = await asyncio.wait_for(asyncio.to_thread(assassin_ledger.get_ledger, t), timeout=45.0)
@@ -434,20 +428,35 @@ async def scheduled_sniper_monitor(context):
                                 if chat_id:
                                     await _safe_send(context, chat_id, f"🕸️ <b>[{html.escape(t)}] +1.0% 고정 익절망 장전 완료</b>\n▫️ 목표 지정가: ${sell_price:.2f} (독립 장부 수량 {t_state['qty']}주)", parse_mode='HTML')
 
+                    # 🚨 MODIFIED: [암살자 Ghost Selling(유령 매도) 팩트 교정]
+                    # sell_odno가 유실되더라도 보유 수량이 존재하면 체결 및 물리적 잔고 교차 검증 로직 강제 가동
                     t_state = await asyncio.wait_for(asyncio.to_thread(_read_state_sync, t, now_est), timeout=45.0)
-                    
-                    # 🚨 MODIFIED: [유령 잔고(Ghost Balance) 및 익절 누락 궁극 수술] 매도 추적망 다중화 결속
-                    if (t_state.get('sell_odno') or t_state.get('history_odnos')) and t_state.get('qty') > 0:
+                    if t_state.get('qty') > 0:
                         exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                         safe_exec = exec_hist if isinstance(exec_hist, list) else []
                         
-                        target_sell_odnos = set(t_state.get('history_odnos', []))
+                        filled_qty = 0
                         if t_state.get('sell_odno'):
-                            target_sell_odnos.add(t_state.get('sell_odno'))
+                            sell_execs = [ex for ex in safe_exec if str(ex.get('odno')) == t_state['sell_odno'] and ex.get('sll_buy_dvsn_cd') == '01']
+                            filled_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs)
                             
-                        sell_execs = [ex for ex in safe_exec if str(ex.get('odno')) in target_sell_odnos and ex.get('sll_buy_dvsn_cd') == '01']
-                        
-                        filled_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs)
+                        # 🚨 [암살자 Ghost Selling 자가 치유(Self-Healing) 방어막]
+                        # KIS 실서버 잔고가 큐 장부(본진) + 암살자 장부 수량보다 적다면, 암살자가 익절된 것으로 강제 인식
+                        try:
+                            q_data = await asyncio.wait_for(asyncio.to_thread(queue_ledger.get_queue, t), timeout=45.0)
+                            vrev_qty = sum(int(_safe_float(item.get("qty"))) for item in (q_data or []) if isinstance(item, dict))
+                            actual_kis_qty = int(_safe_float(safe_holdings.get(t, {}).get('qty', 0)))
+                            
+                            expected_qty = vrev_qty + t_state.get('qty')
+                            if actual_kis_qty < expected_qty:
+                                missing_qty = expected_qty - actual_kis_qty
+                                inferred_fill = min(missing_qty, t_state.get('qty'))
+                                if inferred_fill > filled_qty:
+                                    logging.warning(f"🚨 [{t}] 암살자 유령 매도(Ghost Selling) 감지! KIS 실잔고({actual_kis_qty})가 논리잔고({expected_qty})보다 적어 {inferred_fill}주를 체결로 강제 인식합니다.")
+                                    filled_qty = inferred_fill
+                        except Exception as e:
+                            logging.error(f"🚨 [{t}] 암살자 유령 매도 스캔 에러: {e}")
+
                         last_filled = t_state.get('last_filled_sell_qty', 0)
                         
                         if filled_qty > last_filled:
